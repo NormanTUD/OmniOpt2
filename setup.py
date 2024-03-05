@@ -45,6 +45,9 @@ setup(name='omniopt',
     author_email='norman.koch@tu-dresden.de',
     url='https://scads.ai/transfer-2/verfuegbare-software-dienste-en/omniopt/',
     install_requires=install_requires,
+    packages=[
+        '.',
+    ],
     data_files=[('bin', [
         "evaluate-run", 
         ".helpers.py", 
@@ -53,7 +56,6 @@ setup(name='omniopt',
         "plot", 
         ".plot.py", 
         ".shellscript_functions", 
-        ".tools/*"
         ])],
     include_package_data=True,
 )
