@@ -1156,7 +1156,6 @@ def main ():
                             save_pd_csv()
                         except submitit.core.utils.UncompletedJobError as error:
                                 print_color("red", str(error))
-                                sys.exit(27)
                         except ax.exceptions.core.UserInputError as error:
                             if "None for metric" in str(error):
                                 print_color("red", f"\n:warning: It seems like the program that was about to be run didn't have 'RESULT: <NUMBER>' in it's output string.\nError: {error}")
