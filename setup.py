@@ -44,7 +44,6 @@ setup(name='omniopt',
     author='Norman Koch',
     author_email='norman.koch@tu-dresden.de',
     url='https://scads.ai/transfer-2/verfuegbare-software-dienste-en/omniopt/',
-    packages=['distutils', 'distutils.command'],
     install_requires=install_requires
 )
 
