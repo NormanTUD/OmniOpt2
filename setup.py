@@ -58,7 +58,7 @@ setup(name='omniopt',
         "requirements.txt", 
         "setup.py", 
         ".shellscript_functions", 
-        ".tools"
+        ".tools/*"
         ])],
     include_package_data=True,
 )
