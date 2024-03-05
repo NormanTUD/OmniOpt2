@@ -217,26 +217,28 @@ while [ $k -lt ${#args[@]} ]; do
 	k=$((k+1))
 done
 
-if command -v whiptail 2>/dev/null >/dev/null; then
-	if [[ ! -e .dont_ask_upgrade_main ]]; then
-		CURRENTHASH=$(git rev-parse HEAD)
+if [[ -d ".git" ]]; then
+	if command -v whiptail 2>/dev/null >/dev/null; then
+		if [[ ! -e .dont_ask_upgrade_main ]]; then
+			CURRENTHASH=$(git rev-parse HEAD)
 
-		REMOTEURL=$(git config --get remote.origin.url)
-		REMOTEHASH=$(git ls-remote $REMOTEURL HEAD | awk '{ print $1}')
+			REMOTEURL=$(git config --get remote.origin.url)
+			REMOTEHASH=$(git ls-remote $REMOTEURL HEAD | awk '{ print $1}')
 
-		if [ ! "$CURRENTHASH" = "$REMOTEHASH" ]; then
-			eval `resize`
-			if (whiptail --title "There is a new version of OmniOpt available" --yesno "Do you want to upgrade?" $LINES $COLUMNS $(( $LINES - 8 ))); then
-				git pull
-				eval "./main $args_string"
-				exit
-			else
+			if [ ! "$CURRENTHASH" = "$REMOTEHASH" ]; then
 				eval `resize`
-				if (whiptail --title "Ask again?" --yesno "You chose not to upgrade. Ask again at next start?" $LINES $COLUMNS $(( $LINES - 8 ))); then
-					echo "Asking again next time if you want to upgrade"
+				if (whiptail --title "There is a new version of OmniOpt available" --yesno "Do you want to upgrade?" $LINES $COLUMNS $(( $LINES - 8 ))); then
+					git pull
+					eval "./main $args_string"
+					exit
 				else
-					green_text "OK, not asking again"
-					touch .dont_ask_upgrade_main
+					eval `resize`
+					if (whiptail --title "Ask again?" --yesno "You chose not to upgrade. Ask again at next start?" $LINES $COLUMNS $(( $LINES - 8 ))); then
+						echo "Asking again next time if you want to upgrade"
+					else
+						green_text "OK, not asking again"
+						touch .dont_ask_upgrade_main
+					fi
 				fi
 			fi
 		fi
