@@ -1,5 +1,7 @@
 #!/bin/bash
 
+cd $(pwd)
+
 mkdir -p debuglogs
 bash_logname=debuglogs/evaluate_run.log
 let i=1
@@ -12,7 +14,7 @@ exec 2> >(tee -ia $bash_logname >& 2)
 
 export BASH_XTRACEFD="$FD"
 
-PROJECTDIR=runs
+PROJECTDIR=$(pwd)/runs
 
 export BUBBLESIZEINPX=7
 export NONZERODIGITS=2
