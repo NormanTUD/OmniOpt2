@@ -1,0 +1,375 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+function calltracer () {
+        echo 'Last file/last line:'
+        caller
+}
+
+trap 'calltracer' ERR
+
+slurmlogpath () {
+	if command -v scontrol 2>/dev/null >/dev/null; then
+		scontrol show job $1 | grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn} StdOut | sed -e 's/^\s*StdOut=//'
+	fi
+}
+
+function echoerr() {
+        echo "$@" 1>&2
+}
+
+function green_text {
+        echoerr -e "\033[0;32m$1\e[0m"
+}
+
+function red_text {
+        echoerr -e "\e[31m$1\e[0m"
+}
+
+minutes_to_hh_mm_ss() {
+	var=$1
+
+	number_re='^[0-9]+$'
+	time_re='^[0-9]+:[0-9]+:[0-9]+$'
+
+	if [[ $var =~ $number_re ]] ; then
+		local total_minutes="$var"
+		local hours=$(( total_minutes / 60 ))
+		local minutes=$(( total_minutes % 60 ))
+		local seconds=00
+
+		printf "%02d:%02d:%02d\n" "$hours" "$minutes" "$seconds"
+	elif [[ $var =~ $time_re ]]; then
+		echo $var
+	else
+		red_text "ERROR: $var is not a valid input. Must be a number of minutes (digits) or HH:MM:SS"
+
+		exit 103
+	fi
+}
+
+int_re='^[+-]?[0-9]+$'
+
+export mem_gb=
+export gpus=
+export time=
+export experiment_name=
+export help=0
+export follow=0
+
+args_string=""
+
+args=("$@")
+k=0
+while [ $k -lt ${#args[@]} ]; do
+	i="${args[k]}"
+
+        case $i in
+                --mem_gb=*)
+                        old_mem_gb=$mem_gb
+                        mem_gb="${i#*=}"
+                        if ! [[ $mem_gb =~ $int_re ]] ; then
+                                red_text "error: --mem_gb not a INT: $i" >&2
+                                exit 100
+                        fi
+
+                        if [[ ! -z $old_mem_gb ]]; then
+                                red_text "--mem_gb was specified more than once. Using the last one."
+				args_string=$(echo "$args_string" | sed -e 's#\s*--mem_gb=[0-9]*\s\s*# #')
+                        fi
+
+			args_string+=" --mem_gb=$mem_gb "
+
+                        ;;
+                --mem_gb)
+                        old_mem_gb=$mem_gb
+
+                        shift
+			k=$((k+1))
+
+                        mem_gb="${args[k]}"
+                        if ! [[ $mem_gb =~ $int_re ]] ; then
+                                red_text "error: --mem_gb not a INT: $i" >&2
+                                exit 100
+                        fi
+
+                        if [[ ! -z $old_mem_gb ]]; then
+                                red_text "--mem_gb was specified more than once. Using the last one."
+				args_string=$(echo "$args_string" | sed -e 's#\s*--mem_gb=[0-9]*\s\s*# #')
+                        fi
+
+			args_string+=" --mem_gb=$mem_gb "
+
+                        ;;
+
+                --gpus=*)
+                        old_gpus=$gpus
+                        gpus="${i#*=}"
+                        if ! [[ $gpus =~ $int_re ]] ; then
+                                red_text "error: --gpus not a INT: $i" >&2
+                                exit 100
+                        fi
+
+                        if [[ ! -z $old_gpus ]]; then
+                                red_text "--gpus was specified more than once. Using the last one."
+				args_string=$(echo "$args_string" | sed -e 's#\s*--gpus=[0-9]*\s\s*# #')
+                        fi
+
+			args_string+=" --gpus=$gpus "
+
+                        ;;
+                --gpus)
+                        old_gpus=$gpus
+
+                        shift
+
+			k=$((k+1))
+                        gpus="${args[k]}"
+                        if ! [[ $gpus =~ $int_re ]] ; then
+                                red_text "error: --gpus not a INT: $i" >&2
+                                exit 100
+                        fi
+
+                        if [[ ! -z $old_gpus ]]; then
+                                red_text "--gpus was specified more than once. Using the last one."
+				args_string=$(echo "$args_string" | sed -e 's#\s*--gpus=[0-9]*\s\s*# #')
+                        fi
+
+			args_string+=" --gpus=$gpus "
+
+                        ;;
+
+		--experiment_name=*)
+                        old_experiment_name=$experiment_name
+                        experiment_name="${i#*=}"
+
+                        if [[ ! -z $old_experiment_name ]]; then
+                                red_text "--experiment_name was specified more than once. Using the last one."
+				args_string=$(echo "$args_string" | sed -e 's#\s*--experiment_name=[0-9a-zA-Z_]*\s\s*# #')
+                        fi
+
+			args_string+=" --experiment_name=$experiment_name "
+
+                        ;;
+                --experiment_name)
+                        old_experiment_name=$experiment_name
+
+                        shift
+
+			k=$((k+1))
+                        experiment_name="${args[k]}"
+
+                        if [[ ! -z $old_experiment_name ]]; then
+                                red_text "--experiment_name was specified more than once. Using the last one."
+				args_string=$(echo "$args_string" | sed -e 's#\s*--experiment_name=[0-9a-zA-Z_]*\s\s*# #')
+                        fi
+
+			args_string+=" --experiment_name=$experiment_name "
+
+                        ;;
+
+		--time=*)
+                        old_time=$time
+                        time="${i#*=}"
+
+                        if [[ ! -z $old_time ]]; then
+                                red_text "--time was specified more than once. Using the last one."
+				args_string=$(echo "$args_string" | sed -e 's#\s*--time=[0-9a-zA-Z_]*\s\s*# #')
+                        fi
+
+			args_string+=" --time=$time "
+
+                        ;;
+                --time)
+                        old_time=$time
+
+                        shift
+
+			k=$((k+1))
+                        time="${args[k]}"
+
+                        if [[ ! -z $old_time ]]; then
+                                red_text "--time was specified more than once. Using the last one."
+				args_string=$(echo "$args_string" | sed -e 's#\s*--time=[0-9a-zA-Z_]*\s\s*# #')
+                        fi
+
+			args_string+=" --time=$time "
+
+                        ;;
+
+		--follow)
+			follow=1
+                        ;;
+                --help*)
+			help=1
+			args_string+=" --help "
+                        ;;
+                --debug)
+                        set -x
+                        ;;
+
+		*)
+			args_string+=" $i "
+			;;
+        esac
+	k=$((k+1))
+done
+
+if command -v whiptail 2>/dev/null >/dev/null; then
+	if [[ ! -e .dont_ask_upgrade_main ]]; then
+		CURRENTHASH=$(git rev-parse HEAD)
+
+		REMOTEURL=$(git config --get remote.origin.url)
+		REMOTEHASH=$(git ls-remote $REMOTEURL HEAD | awk '{ print $1}')
+
+		if [ ! "$CURRENTHASH" = "$REMOTEHASH" ]; then
+			eval `resize`
+			if (whiptail --title "There is a new version of OmniOpt available" --yesno "Do you want to upgrade?" $LINES $COLUMNS $(( $LINES - 8 ))); then
+				git pull
+				eval "./main $args_string"
+				exit
+			else
+				eval `resize`
+				if (whiptail --title "Ask again?" --yesno "You chose not to upgrade. Ask again at next start?" $LINES $COLUMNS $(( $LINES - 8 ))); then
+					echo "Asking again next time if you want to upgrade"
+				else
+					green_text "OK, not asking again"
+					touch .dont_ask_upgrade_main
+				fi
+			fi
+		fi
+	fi
+fi
+
+args_string=$(echo "$args_string" | sed -e 's#\s\s*# #g')
+
+if [[ -z $gpus ]]; then
+	gpus=0
+fi
+
+if [[ $help -eq 0 ]] && command -v sbatch >/dev/null; then
+	if [[ -z "$mem_gb" ]]; then
+		red_text "Parameter --mem_gb is missing or empty";
+		exit 101
+	fi
+
+	if [[ -z "$time" ]]; then
+		red_text "Parameter --time is missing or empty";
+		exit 102
+	fi
+
+	if [[ -z $experiment_name ]]; then
+		red_text "Parameter --experiment_name is missing or empty"
+		exit 104
+	fi
+fi
+
+sent_usr_signal_to_script=0
+python_pid=
+
+JOB_START_TIME=$SLURM_JOB_START_TIME
+JOB_END_TIME=$SLURM_JOB_END_TIME
+
+run_before_end () {
+	if command -v sbatch >/dev/null; then
+		sleep_time=$((JOB_END_TIME - JOB_START_TIME - 30))
+		# Überprüfen, ob die Zeitdifferenz positiv ist, um zu vermeiden, dass das Skript im negativen Bereich schläft
+		if [ $sleep_time -gt 0 ]; then
+			sleep $sleep_time
+
+			if [[ $sent_usr_signal_to_script -eq 0 ]]; then
+				sent_usr_signal_to_script=1
+				kill -USR1 "$python_pid"
+			else
+				echo "Already sent user signal to python PID $python_pid. Not doing that again."
+			fi
+		else
+			echo "It is recommended that you run this in a slurm job."
+		fi
+	fi
+}
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+if [ -n "${SLURM_JOB_ID:-}" ] ; then
+	if [[ -z $DEBUG_SLURM ]]; then
+		SLURM_FILE_SCRIPT_DIR=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/Command=/{print $2}')
+		SLURM_FILE_SCRIPT_DIR=$(dirname $SLURM_FILE_SCRIPT_DIR)
+
+		if [[ -d $SLURM_FILE_SCRIPT_DIR ]]; then
+			SCRIPT_DIR="$SLURM_FILE_SCRIPT_DIR"
+		else
+			echo "SLURM_FILE_SCRIPT_DIR $SLURM_FILE_SCRIPT_DIR not found, even though SLURM_JOB_ID exists ($SLURM_JOB_ID). Using SCRIPT_DIR=$SCRIPT_DIR"
+		fi
+	fi
+fi
+
+cd $SCRIPT_DIR
+
+source .shellscript_functions
+
+if [ -n "${SLURM_JOB_ID:-}" ] || ! command -v sbatch >/dev/null; then
+	# To start all subjobs indenpedently from the main job, unset all SLURM variables
+	for i in $(env | egrep "^SLURM" | sed -e 's#\s*=.*##' | grep -v SLURM_JOB_ID | grep -v SBATCH_RESERVATION); do
+		unset $i
+	done
+
+	if [[ ! -z $SLURM_JOB_ID ]]; then
+		echo -e "To cancel, use '\e[31mscancel $SLURM_JOB_ID\e[0m'"
+	fi
+
+	IFS=$' '
+	echo "python3 .main.py $args_string"
+	python3 .main.py $args_string &
+	python_pid=$!
+
+	run_before_end &
+
+	wait "$python_pid"
+else
+	IFS=$' '
+
+	formatted_time=$(minutes_to_hh_mm_ss $time)
+
+	sbatch_result=""
+	exit_code=""
+
+	if [[ $gpus -ne 0 ]]; then
+		sbatch_result=$(sbatch --job-name "$experiment_name" --time=$formatted_time --mem=${mem_gb}GB --gres=gpu:$gpus $SCRIPT_DIR/main $* | tee /dev/stderr)
+		exit_code=$?
+	else
+		sbatch_result=$(sbatch --job-name "$experiment_name" --time=$formatted_time --mem=${mem_gb}GB $SCRIPT_DIR/main $* | tee /dev/stderr)
+		exit_code=$?
+	fi
+
+	if [[ $exit_code -eq 0 ]]; then
+		if [[ $follow -eq 1 ]]; then
+			started_job_nr=$(echo "$sbatch_result" | sed -e 's#.*\s##')
+			if command -v sbatch 2>/dev/null >/dev/null; then
+				LOG_PATH=$(slurmlogpath $started_job_nr)
+
+				spin[0]="-"
+				spin[1]="\\"
+				spin[2]="|"
+				spin[3]="/"
+
+				echo "Waiting until the path $LOG_PATH exists. When it does, it will automatically be followed. CTRL-c does NOT cancel the optimization, only the tail..."
+
+				while ! [[ -e $LOG_PATH ]]; do
+					for i in "${spin[@]}"; do
+						echo -ne "\b$i"
+						sleep 0.1
+					done
+				done
+
+				echo ""
+
+				tail -n1000000 -f $LOG_PATH
+			fi
+		fi
+	else
+		red_text "Failed to start sbatch job. Exit-Code: $exit_code"
+	fi
+fi
