@@ -45,11 +45,8 @@ setup(name='omniopt',
     author_email='norman.koch@tu-dresden.de',
     url='https://scads.ai/transfer-2/verfuegbare-software-dienste-en/omniopt/',
     install_requires=install_requires,
-    package_data={'': [
+    data_files=[
         "evaluate-run", 
-        ".git", 
-        ".gitignore", 
-        "gui", 
         ".helpers.py", 
         "LICENSE", 
         "main", 
@@ -62,7 +59,7 @@ setup(name='omniopt',
         "setup.py", 
         ".shellscript_functions", 
         ".tools"
-    ]},
+    ],
     include_package_data=True,
 )
 
