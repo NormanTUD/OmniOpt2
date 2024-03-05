@@ -306,8 +306,11 @@ if [ -n "${SLURM_JOB_ID:-}" ] ; then
 			echo "SLURM_FILE_SCRIPT_DIR $SLURM_FILE_SCRIPT_DIR not found, even though SLURM_JOB_ID exists ($SLURM_JOB_ID). Using SCRIPT_DIR=$SCRIPT_DIR"
 		fi
 	fi
+else
+	if [[ "$SCRIPT_DIR" == */bin/ ]]; then
+		SCRIPT_DIR=$(pwd)
+	fi
 fi
-
 cd $SCRIPT_DIR
 
 source .shellscript_functions
