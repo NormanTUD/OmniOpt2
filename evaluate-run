@@ -102,7 +102,7 @@ done
 
 
 source .shellscript_functions
-source ../tools/general.sh
+source .general.sh
 
 function info_message_large {
 	MSG=$1

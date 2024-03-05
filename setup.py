@@ -56,6 +56,7 @@ setup(name='omniopt',
         "plot", 
         ".plot.py", 
         ".shellscript_functions", 
+        ".general.sh", 
         ])],
     include_package_data=True,
 )
