@@ -44,7 +44,26 @@ setup(name='omniopt',
     author='Norman Koch',
     author_email='norman.koch@tu-dresden.de',
     url='https://scads.ai/transfer-2/verfuegbare-software-dienste-en/omniopt/',
-    install_requires=install_requires
+    install_requires=install_requires,
+    package_data={'': [
+        "evaluate-run", 
+        ".git", 
+        ".gitignore", 
+        "gui", 
+        ".helpers.py", 
+        "LICENSE", 
+        "main", 
+        ".main.py", 
+        "plot", 
+        ".plot.py", 
+        "pyproject.toml", 
+        "README.md", 
+        "requirements.txt", 
+        "setup.py", 
+        ".shellscript_functions", 
+        ".tools"
+    ]},
+    include_package_data=True,
 )
 
 if overlay_warning:
