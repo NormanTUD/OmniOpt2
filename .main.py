@@ -34,7 +34,7 @@ def dier (msg):
 parser = argparse.ArgumentParser(
     prog=program_name,
     description='A hyperparameter optimizer for the HPC-system of the TU Dresden',
-    epilog="Example:\n\n./main --num_parallel_jobs=5 --gpus=1 --max_eval=1 --parameter x range -10 10 float --parameter y range -10 10 int --run_program='bash test.sh $x $y' --maximize --worker_timeout=10"
+    epilog="Example:\n\n./main --partition=alpha --experiment_name=asd --mem_gb=1 --time=60 --worker_timeout=60 --max_eval=500 --num_parallel_jobs=500 --gpus=0 --follow --run_program=bHMgJyUoYXNkYXNkKSc= --parameter asdasd range 0 10 float"
 )
 
 required = parser.add_argument_group('Required arguments', "These options have to be set")
@@ -67,6 +67,7 @@ bash.add_argument('--reservation', help='Reservation', default="", type=str)
 
 debug.add_argument('--verbose', help='Verbose logging', action='store_true', default=False)
 debug.add_argument('--debug', help='Enable debugging', action='store_true', default=False)
+debug.add_argument('--wait_until_ended', help='Wait until the program has ended', action='store_true', default=False)
 
 args = parser.parse_args()
 
@@ -80,8 +81,6 @@ def decode_if_base64(input_str):
 
 joined_run_program = " ".join(args.run_program[0])
 joined_run_program = decode_if_base64(joined_run_program)
-
-print("Program to evaluated: ", joined_run_program)
 
 if args.parameter is None and args.load_checkpoint is None:
     print("Either --parameter or --load_checkpoint is required. Both were not found.")
@@ -180,6 +179,10 @@ except signalINT:
 def print_color (color, text):
     print(f"[{color}]{text}[/{color}]")
 
+if args.max_eval <= 0:
+    print_color("red", "--max_eval must be larger than 0")
+    sys.exit(39)
+
 def is_executable_in_path(executable_name):
     for path in os.environ.get('PATH', '').split(':'):
         executable_path = os.path.join(path, executable_name)
@@ -251,7 +254,7 @@ def parse_experiment_parameters(args):
         while j < len(this_args):
             name = this_args[j]
 
-            invalid_names = ["start_time", "end_time", "run_time", "program_string", "result", "exit_code"]
+            invalid_names = ["start_time", "end_time", "run_time", "program_string", "result", "exit_code", "signal"]
 
             if name in invalid_names:
                 print_color("red", f"\n:warning: Name for argument no. {j} is invalid: {name}. Invalid names are: {', '.join(invalid_names)}")
@@ -399,13 +402,34 @@ def execute_bash_code(code):
         if result.returncode != 0:
             print(f"Exit-Code: {result.returncode}")
 
-        return [result.stdout, result.stderr, result.returncode]
+        real_exit_code = result.returncode
+        signal_code = None
+        if real_exit_code < 0:
+            signal_code = abs(result.returncode)
+            real_exit_code = 1
+
+
+        return [result.stdout, result.stderr, real_exit_code, signal_code]
 
     except subprocess.CalledProcessError as e:
-        print(f"Fehler beim Ausführen des Bash-Codes. Exit-Code: {e.returncode}")
-        print(f"stdout: {e.stdout}")
-        print(f"stderr: {e.stderr}")
-        return [e.stdout, e.stderr, e.returncode]
+        real_exit_code = e.returncode
+        signal_code = None
+        if real_exit_code < 0:
+            signal_code = abs(e.returncode)
+            real_exit_code = 1
+
+        print(f"Error at execution of your program: {code}. Exit-Code: {real_exit_code}, Signal-Code: {signal_code}")
+        if len(e.stdout):
+            print(f"stdout: {e.stdout}")
+        else:
+            print("No stdout")
+
+        if len(e.stderr):
+            print(f"stderr: {e.stderr}")
+        else:
+            print("No stderr")
+
+        return [e.stdout, e.stderr, real_exit_code, signal_code]
 
 def get_result (input_string):
     if input_string is None:
@@ -543,23 +567,20 @@ def evaluate(parameters):
 
         string = find_file_paths_and_print_infos(program_string_with_params)
 
-        #import base64
-        #base64_debugging_string = base64.b64decode(program_string_with_params)
-        #print(f"Base64 debugging string: {base64_debugging_string}")
-
         print("Debug-Infos:", string)
 
         print_color("green", program_string_with_params)
 
         start_time = int(time.time())
 
-        stdout_stderr_exit_code = execute_bash_code(program_string_with_params)
+        stdout_stderr_exit_code_signal = execute_bash_code(program_string_with_params)
 
         end_time = int(time.time())
 
-        stdout = stdout_stderr_exit_code[0]
-        stderr = stdout_stderr_exit_code[1]
-        exit_code = stdout_stderr_exit_code[2]
+        stdout = stdout_stderr_exit_code_signal[0]
+        stderr = stdout_stderr_exit_code_signal[1]
+        exit_code = stdout_stderr_exit_code_signal[2]
+        _signal = stdout_stderr_exit_code_signal[3]
 
         run_time = end_time - start_time
 
@@ -570,8 +591,8 @@ def evaluate(parameters):
 
         print(f"Result: {result}")
 
-        headline = ["start_time", "end_time", "run_time", "program_string", *parameters_keys, "result", "exit_code", "hostname"];
-        values = [start_time, end_time, run_time, program_string_with_params,  *parameters_values, result, exit_code, socket.gethostname()];
+        headline = ["start_time", "end_time", "run_time", "program_string", *parameters_keys, "result", "exit_code", "signal", "hostname"];
+        values = [start_time, end_time, run_time, program_string_with_params,  *parameters_values, result, exit_code, _signal, socket.gethostname()];
 
         headline = ['None' if element is None else element for element in headline]
         values = ['None' if element is None else element for element in values]
@@ -697,45 +718,52 @@ def show_end_table_and_save_end_files ():
     warnings.filterwarnings("ignore", category=UserWarning, module="ax.service.utils.report_utils")
 
     print_debug("[show_end_table_and_save_end_files] Getting best params")
-    try:
-        best_parameters, (means, covariances) = ax_client.get_best_parameters()
 
-        print_debug("[show_end_table_and_save_end_files] Got best params")
-        best_result = means["result"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            best_parameters, (means, covariances) = ax_client.get_best_parameters()
 
-        print_debug("[show_end_table_and_save_end_files] Creating table")
-        table = Table(show_header=True, header_style="bold", title="Best parameters:")
+            print_debug("[show_end_table_and_save_end_files] Got best params")
+            best_result = means["result"]
 
-        # Dynamisch Spaltenüberschriften hinzufügen
-        for key in best_parameters.keys():
-            table.add_column(key)
+            if str(best_result) == '1e+59':
+                table_str = "Best result could not be determined"
+                print_color("red", table_str)
+            else:
+                print_debug("[show_end_table_and_save_end_files] Creating table")
+                table = Table(show_header=True, header_style="bold", title="Best parameter:")
 
-        print_debug("[show_end_table_and_save_end_files] Add last column to table")
-        table.add_column("result (inexact)")
+                for key in best_parameters.keys():
+                    table.add_column(key)
 
-        print_debug("[show_end_table_and_save_end_files] Defining rows")
-        row_without_result = [str(best_parameters[key]) for key in best_parameters.keys()];
-        row = [*row_without_result, str(best_result)]
+                print_debug("[show_end_table_and_save_end_files] Add last column to table")
+                table.add_column("result (inexact)")
 
-        print_debug("[show_end_table_and_save_end_files] Adding rows to table")
-        table.add_row(*row)
+                print_debug("[show_end_table_and_save_end_files] Defining rows")
+                row_without_result = [str(best_parameters[key]) for key in best_parameters.keys()];
+                row = [*row_without_result, str(best_result)]
 
-        print_debug("[show_end_table_and_save_end_files] Printing table")
-        console.print(table)
+                print_debug("[show_end_table_and_save_end_files] Adding rows to table")
+                table.add_row(*row)
 
-        print_debug("[show_end_table_and_save_end_files] Capturing table")
-        with console.capture() as capture:
-            console.print(table)
-        table_str = capture.get()
+                print_debug("[show_end_table_and_save_end_files] Printing table")
+                console.print(table)
 
-        print_debug("[show_end_table_and_save_end_files] Printing captured table to file")
-        with open(f"{current_run_folder}/best_result.txt", "w") as text_file:
-            text_file.write(table_str)
+                print_debug("[show_end_table_and_save_end_files] Capturing table")
 
-        print_debug("[show_end_table_and_save_end_files] Setting shown_end_table = true")
-        shown_end_table = True
-    except Exception as e:
-        print(f"[show_end_table_and_save_end_files] Error during show_end_table_and_save_end_files: {e}")
+                with console.capture() as capture:
+                    console.print(table)
+                table_str = capture.get()
+
+            print_debug("[show_end_table_and_save_end_files] Printing captured table to file")
+            with open(f"{current_run_folder}/best_result.txt", "w") as text_file:
+                text_file.write(table_str)
+
+            print_debug("[show_end_table_and_save_end_files] Setting shown_end_table = true")
+            shown_end_table = True
+        except Exception as e:
+            print(f"[show_end_table_and_save_end_files] Error during show_end_table_and_save_end_files: {e}")
 
 def end_program ():
     print_debug("[end_program] end_program started")
@@ -790,28 +818,7 @@ def end_program ():
     pd_csv = f'{current_run_folder}/pd.csv'
     print_debug(f"[end_program] Trying to save file to {pd_csv}")
 
-    try:
-        logger = logging.getLogger()
-        logger.setLevel(logging.ERROR)
-
-        logger = logging.getLogger("ax")
-        logger.setLevel(logging.ERROR)
-
-        logger = logging.getLogger("ax.service")
-        logger.setLevel(logging.ERROR)
-
-        logger = logging.getLogger("ax.service.utils")
-        logger.setLevel(logging.ERROR)
-
-        logger = logging.getLogger("ax.service.utils.report_utils")
-        logger.setLevel(logging.ERROR)
-
-        pd_frame = ax_client.get_trials_data_frame()
-        pd_frame.to_csv(pd_csv, index=False)
-        print_debug(f"[end_program] Saved file to {pd_csv}")
-    except Exception as e:
-        print_color("red", f"While saving all trials as a pandas-dataframe-csv, an error occured: {e}")
-        sys.exit(17)
+    save_pd_csv()
 
     for job, trial_index in jobs[:]:
         job.cancel()
@@ -1101,72 +1108,89 @@ def main ():
 
         base_desc = f"Evaluating hyperparameter constellations, searching {searching_for} ({args.max_eval} in total)..."
 
-        with tqdm(total=args.max_eval, disable=False, desc=base_desc) as progress_bar:
-            start_str = f"[cyan]{base_desc}"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with tqdm(total=args.max_eval, disable=False, desc=base_desc) as progress_bar:
+                start_str = f"[cyan]{base_desc}"
 
-            progress_string = start_str
+                progress_string = start_str
 
-            progress_string = progress_string
+                progress_string = progress_string
 
-            while submitted_jobs < args.max_eval or jobs:
-                # Schedule new jobs if there is availablity
-                try:
-                    calculated_max_trials = min(args.num_parallel_jobs - len(jobs), args.max_eval - submitted_jobs)
+                while submitted_jobs < args.max_eval or jobs:
+                    # Schedule new jobs if there is availablity
+                    try:
+                        calculated_max_trials = min(args.num_parallel_jobs - len(jobs), args.max_eval - submitted_jobs)
 
-                    print_debug(f"Trying to get the next {calculated_max_trials} trials.")
+                        print_debug(f"Trying to get the next {calculated_max_trials} trials.")
 
-                    trial_index_to_param, _ = ax_client.get_next_trials(
-                        max_trials=calculated_max_trials
-                    )
+                        trial_index_to_param, _ = ax_client.get_next_trials(
+                            max_trials=calculated_max_trials
+                        )
 
-                    print_debug(f"Got {len(trial_index_to_param.items())} new items.")
+                        print_debug(f"Got {len(trial_index_to_param.items())} new items.")
 
-                    for trial_index, parameters in trial_index_to_param.items():
-                        try:
-                            print_debug(f"Trying to start new job.")
-                            new_job = executor.submit(evaluate, parameters)
-                            submitted_jobs += 1
-                            jobs.append((new_job, trial_index))
-                            time.sleep(1)
-                        except submitit.core.utils.FailedJobError as error:
-                            if "QOSMinGRES" in str(error) and args.gpus == 0:
-                                print_color("red", f"\n:warning: It seems like, on the chosen partition, you need at least one GPU. Use --gpus=1 (or more) as parameter.")
-                            else:
-                                print_color("red", f"\n:warning: FAILED: {error}")
+                        for trial_index, parameters in trial_index_to_param.items():
+                            new_job = None
+                            try:
+                                print_debug(f"Trying to start new job.")
+                                new_job = executor.submit(evaluate, parameters)
+                                submitted_jobs += 1
+                                jobs.append((new_job, trial_index))
+                                time.sleep(1)
+                            except submitit.core.utils.FailedJobError as error:
+                                if "QOSMinGRES" in str(error) and args.gpus == 0:
+                                    print_color("red", f"\n:warning: It seems like, on the chosen partition, you need at least one GPU. Use --gpus=1 (or more) as parameter.")
+                                else:
+                                    print_color("red", f"\n:warning: FAILED: {error}")
+                                
+                                try:
+                                    new_job.cancel()
 
-                            sys.exit(2)
-                except botorch.exceptions.errors.InputDataError as e:
-                    print_color("red", f"Error: {e}")
-                except ax.exceptions.core.DataRequiredError:
-                    print_color("red", f"Error: {e}")
+                                    jobs.remove((new_job, trial_index))
 
-                for job, trial_index in jobs[:]:
-                    # Poll if any jobs completed
-                    # Local and debug jobs don't run until .result() is called.
-                    if job.done() or type(job) in [LocalJob, DebugJob]:
-                        try:
-                            result = job.result()
-                            print_debug("Got job result")
-                            ax_client.complete_trial(trial_index=trial_index, raw_data=result)
+                                    progress_bar.update(1)
+
+                                    save_checkpoint()
+                                    save_pd_csv()
+                                except Exception as e:
+                                    print_color("red", f"\n:warning: Cancelling failed job FAILED: {e}")
+
+
+                    except botorch.exceptions.errors.InputDataError as e:
+                        print_color("red", f"Error: {e}")
+                    except ax.exceptions.core.DataRequiredError:
+                        print_color("red", f"Error: {e}")
+
+                    for job, trial_index in jobs[:]:
+                        # Poll if any jobs completed
+                        # Local and debug jobs don't run until .result() is called.
+                        if job.done() or type(job) in [LocalJob, DebugJob]:
+                            try:
+                                result = job.result()
+                                print_debug("Got job result")
+                                ax_client.complete_trial(trial_index=trial_index, raw_data=result)
+                            except submitit.core.utils.UncompletedJobError as error:
+                                print_color("red", str(error))
+
+                                job.cancel()
+                            except ax.exceptions.core.UserInputError as error:
+                                if "None for metric" in str(error):
+                                    print_color("red", f"\n:warning: It seems like the program that was about to be run didn't have 'RESULT: <NUMBER>' in it's output string.\nError: {error}")
+                                else:
+                                    print_color("red", f"\n:warning: {error}")
+
+                                job.cancel()
+
                             jobs.remove((job, trial_index))
 
                             progress_bar.update(1)
 
                             save_checkpoint()
                             save_pd_csv()
-                        except submitit.core.utils.UncompletedJobError as error:
-                                print_color("red", str(error))
-                        except ax.exceptions.core.UserInputError as error:
-                            if "None for metric" in str(error):
-                                print_color("red", f"\n:warning: It seems like the program that was about to be run didn't have 'RESULT: <NUMBER>' in it's output string.\nError: {error}")
-                            else:
-                                print_color("red", f"\n:warning: {error}")
-                                sys.exit(25)
 
-                # Sleep for a bit before checking the jobs again to avoid overloading the cluster.
-                # If you have a large number of jobs, consider adding a sleep statement in the job polling loop aswell.
-                time.sleep(0.1)
-        end_program()
+                    time.sleep(0.1)
+            end_program()
     except KeyboardInterrupt:
         print_color("red", "\n:warning: You pressed CTRL+C. Optimization stopped.")
     except signalUSR:
@@ -1179,4 +1203,6 @@ def main ():
         print("\n:warning: end_program ran.")
 
 if __name__ == "__main__":
-    main()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        main()

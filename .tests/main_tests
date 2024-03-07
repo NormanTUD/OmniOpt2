@@ -1,0 +1,178 @@
+#!/bin/bash
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+cd $SCRIPT_DIR
+
+function echoerr() {
+        echo "$@" 1>&2
+}
+
+function yellow_text {
+        echoerr -e "\e\033[0;33m$1\e[0m"
+}
+
+function red_text {
+        echoerr -e "\e[31m$1\e[0m"
+}
+
+function green_text {
+        echoerr -e "\e\033[0;32m$1\e[0m"
+}
+
+set -e
+set -o pipefail
+
+function calltracer () {
+        echo 'Last file/last line:'
+        caller
+}
+trap 'calltracer' ERR
+
+function help () {
+        echo "Possible options:"
+	echo "  --max_eval=(INT)                                   Number of max evals for this test"
+        echo "  --help                                             this help"
+        echo "  --debug                                            Enables debug mode (set -x)"
+        exit $1
+}
+
+debug=0
+max_eval=20
+
+args=("$@")
+k=0
+while [ $k -lt ${#args[@]} ]; do
+	i="${args[k]}"
+
+	case $i in
+		--max_eval=*)
+			old_max_eval=$max_eval
+			max_eval="${i#*=}"
+			if ! [[ $max_eval =~ $int_re ]] ; then
+				red_text "error: --max_eval not a INT: $i" >&2
+				exit 100
+			fi
+
+			;;
+		--max_eval)
+			old_max_eval=$max_eval
+
+			shift
+			k=$((k+1))
+
+			max_eval="${args[k]}"
+			if ! [[ $max_eval =~ $int_re ]] ; then
+				red_text "error: --max_eval not a INT: $i" >&2
+				exit 100
+			fi
+
+			;;
+		--help*)
+			help 1
+			;;
+		--debug)
+			debug=1
+			;;
+
+		*)
+			red_text "Unknown parameter $i"
+			exit 2
+			;;
+	esac
+	k=$((k+1))
+done
+
+if [[ "$max_eval" -lt "1" ]]; then
+	red_text "Max_eval must be 1 or more, is $max_eval"
+	exit 1
+fi
+
+if [[ "$debug" -eq "1" ]]; then
+	set -x
+fi
+
+
+PARTITION="alpha"
+GPUS=0
+TESTNAME=__main__tests__
+
+if [[ "$PARTITION" == "alpha" ]]; then
+	GPUS=1
+fi
+
+
+ERRORS=()
+
+cd ..
+
+# ./.tests/optimization_example --int_param=%(int_param) --float_param=%(float_param) --choice_param=%(choice_param)  --int_param_two=%(int_param_two)
+
+if [[ -d "runs/$TESTNAME" ]]; then
+	yellow_text "Deleting old runs/$TESTNAME..."
+	rm -rf runs/$TESTNAME
+fi
+
+yellow_text "Starting main program..."
+
+./main \
+	--partition=$PARTITION \
+	--experiment_name=$TESTNAME \
+	--mem_gb=1 \
+	--time=30 \
+	--worker_timeout=1 \
+	--max_eval=$max_eval \
+	--num_parallel_jobs=$max_eval \
+	--gpus=$GPUS \
+	--run_program=Li8udGVzdHMvb3B0aW1pemF0aW9uX2V4YW1wbGUgLS1pbnRfcGFyYW09JyUoaW50X3BhcmFtKScgLS1mbG9hdF9wYXJhbT0nJShmbG9hdF9wYXJhbSknIC0tY2hvaWNlX3BhcmFtPSclKGNob2ljZV9wYXJhbSknICAtLWludF9wYXJhbV90d289JyUoaW50X3BhcmFtX3R3bykn \
+	--parameter int_param range -5 5 int \
+	--parameter float_param range -5 5 float \
+	--parameter choice_param choice 1,2,4,8,16,hallo \
+	--parameter int_param_two range -6 6 int \
+	--debug \
+	--wait_until_ended
+
+exit_code=$?
+
+yellow_text "Main program ended..."
+
+if [[ "$exit_code" -ne "0" ]]; then
+	ERRORS+=("main script failed.")
+fi
+
+yellow_text "Calling plot function for runs/$TESTNAME/0"
+
+TMP_FILE_PATH="._test_run.svg"
+./plot --run_dir runs/$TESTNAME/0 --save_to_file $TMP_FILE_PATH
+
+yellow_text "Checking plot function"
+if [[ -e $TMP_FILE_PATH ]]; then
+	if cat $TMP_FILE_PATH | grep Minimum 2>/dev/null >/dev/null; then
+		if cat $TMP_FILE_PATH | grep float_param 2>/dev/null >/dev/null; then
+			number_of_evals_run=$(cat $TMP_FILE_PATH | grep "Number of evaluations shown"  | sed -e 's#\s*-->##' | sed -e 's#.*\s##' | sed -e 's#\s##g')
+			if [[ "$number_of_evals_run" -eq "$max_eval" ]]; then
+				echo "Minimum, float_param found, also number_of_evals_run matches max_eval"
+			else
+				ERRORS+=("number_of_evals_run ($number_of_evals_run) does not match wanted max_eval ($max_eval)")
+			fi
+		else
+			ERRORS+=("word 'float_param' not found in $TMP_FILE_PATH")
+		fi
+	else
+		ERRORS+=("word 'minimum' not found in $TMP_FILE_PATH")
+	fi
+
+	yellow_text "$TMP_FILE_PATH found and checked. Deleting it."
+	rm $TMP_FILE_PATH
+else
+	ERRORS+=("$TMP_FILE_PATH not found")
+fi
+
+if [ ${#errors[@]} -eq 0 ]; then
+	green_text "No errors"
+	exit 0
+else
+	red_text "${ERRORS[*]}"
+
+	exit ${#errors[@]}
+fi

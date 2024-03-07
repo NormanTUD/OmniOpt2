@@ -6,7 +6,7 @@ set -e
 set -o pipefail
 
 function mycd () {
-	echo "cd $1"
+	#echo "cd $1"
 	cd $1
 }
 
@@ -27,12 +27,16 @@ function echoerr() {
         echo "$@" 1>&2
 }
 
+function yellow_text {
+	echoerr -e "\e\033[0;33m$1\e[0m"
+}
+
 function green_text {
-        echoerr -e "\033[0;32m$1\e[0m"
+	echoerr -e "\033[0;32m$1\e[0m"
 }
 
 function red_text {
-        echoerr -e "\e[31m$1\e[0m"
+	echoerr -e "\e[31m$1\e[0m"
 }
 
 minutes_to_hh_mm_ss() {
@@ -65,6 +69,8 @@ export time=
 export experiment_name=
 export help=0
 export follow=0
+export debug=0
+export wait_until_ended=0
 
 args_string=""
 
@@ -73,157 +79,170 @@ k=0
 while [ $k -lt ${#args[@]} ]; do
 	i="${args[k]}"
 
-        case $i in
-                --mem_gb=*)
-                        old_mem_gb=$mem_gb
-                        mem_gb="${i#*=}"
-                        if ! [[ $mem_gb =~ $int_re ]] ; then
-                                red_text "error: --mem_gb not a INT: $i" >&2
-                                exit 100
-                        fi
+	case $i in
+		--mem_gb=*)
+			old_mem_gb=$mem_gb
+			mem_gb="${i#*=}"
+			if ! [[ $mem_gb =~ $int_re ]] ; then
+				red_text "error: --mem_gb not a INT: $i" >&2
+				exit 100
+			fi
 
-                        if [[ ! -z $old_mem_gb ]]; then
-                                red_text "--mem_gb was specified more than once. Using the last one."
+			if [[ ! -z $old_mem_gb ]]; then
+				red_text "--mem_gb was specified more than once. Using the last one."
 				args_string=$(echo "$args_string" | sed -e 's#\s*--mem_gb=[0-9]*\s\s*# #')
-                        fi
+			fi
 
 			args_string+=" --mem_gb=$mem_gb "
 
-                        ;;
-                --mem_gb)
-                        old_mem_gb=$mem_gb
+			;;
+		--mem_gb)
+			old_mem_gb=$mem_gb
 
-                        shift
+			shift
 			k=$((k+1))
 
-                        mem_gb="${args[k]}"
-                        if ! [[ $mem_gb =~ $int_re ]] ; then
-                                red_text "error: --mem_gb not a INT: $i" >&2
-                                exit 100
-                        fi
+			mem_gb="${args[k]}"
+			if ! [[ $mem_gb =~ $int_re ]] ; then
+				red_text "error: --mem_gb not a INT: $i" >&2
+				exit 100
+			fi
 
-                        if [[ ! -z $old_mem_gb ]]; then
-                                red_text "--mem_gb was specified more than once. Using the last one."
+			if [[ ! -z $old_mem_gb ]]; then
+				red_text "--mem_gb was specified more than once. Using the last one."
 				args_string=$(echo "$args_string" | sed -e 's#\s*--mem_gb=[0-9]*\s\s*# #')
-                        fi
+			fi
 
 			args_string+=" --mem_gb=$mem_gb "
 
-                        ;;
+			;;
 
-                --gpus=*)
-                        old_gpus=$gpus
-                        gpus="${i#*=}"
-                        if ! [[ $gpus =~ $int_re ]] ; then
-                                red_text "error: --gpus not a INT: $i" >&2
-                                exit 100
-                        fi
+		--gpus=*)
+			old_gpus=$gpus
+			gpus="${i#*=}"
+			if ! [[ $gpus =~ $int_re ]] ; then
+				red_text "error: --gpus not a INT: $i" >&2
+				exit 100
+			fi
 
-                        if [[ ! -z $old_gpus ]]; then
-                                red_text "--gpus was specified more than once. Using the last one."
+			if [[ ! -z $old_gpus ]]; then
+				red_text "--gpus was specified more than once. Using the last one."
 				args_string=$(echo "$args_string" | sed -e 's#\s*--gpus=[0-9]*\s\s*# #')
-                        fi
+			fi
 
 			args_string+=" --gpus=$gpus "
 
-                        ;;
-                --gpus)
-                        old_gpus=$gpus
+			;;
+		--gpus)
+			old_gpus=$gpus
 
-                        shift
+			shift
 
 			k=$((k+1))
-                        gpus="${args[k]}"
-                        if ! [[ $gpus =~ $int_re ]] ; then
-                                red_text "error: --gpus not a INT: $i" >&2
-                                exit 100
-                        fi
+			gpus="${args[k]}"
+			if ! [[ $gpus =~ $int_re ]] ; then
+				red_text "error: --gpus not a INT: $i" >&2
+				exit 100
+			fi
 
-                        if [[ ! -z $old_gpus ]]; then
-                                red_text "--gpus was specified more than once. Using the last one."
+			if [[ ! -z $old_gpus ]]; then
+				red_text "--gpus was specified more than once. Using the last one."
 				args_string=$(echo "$args_string" | sed -e 's#\s*--gpus=[0-9]*\s\s*# #')
-                        fi
+			fi
 
 			args_string+=" --gpus=$gpus "
 
-                        ;;
+			;;
 
 		--experiment_name=*)
-                        old_experiment_name=$experiment_name
-                        experiment_name="${i#*=}"
+			old_experiment_name=$experiment_name
+			experiment_name="${i#*=}"
 
-                        if [[ ! -z $old_experiment_name ]]; then
-                                red_text "--experiment_name was specified more than once. Using the last one."
+			if [[ ! -z $old_experiment_name ]]; then
+				red_text "--experiment_name was specified more than once. Using the last one."
 				args_string=$(echo "$args_string" | sed -e 's#\s*--experiment_name=[0-9a-zA-Z_]*\s\s*# #')
-                        fi
+			fi
 
 			args_string+=" --experiment_name=$experiment_name "
 
-                        ;;
-                --experiment_name)
-                        old_experiment_name=$experiment_name
+			;;
+		--experiment_name)
+			old_experiment_name=$experiment_name
 
-                        shift
+			shift
 
 			k=$((k+1))
-                        experiment_name="${args[k]}"
+			experiment_name="${args[k]}"
 
-                        if [[ ! -z $old_experiment_name ]]; then
-                                red_text "--experiment_name was specified more than once. Using the last one."
+			if [[ ! -z $old_experiment_name ]]; then
+				red_text "--experiment_name was specified more than once. Using the last one."
 				args_string=$(echo "$args_string" | sed -e 's#\s*--experiment_name=[0-9a-zA-Z_]*\s\s*# #')
-                        fi
+			fi
 
 			args_string+=" --experiment_name=$experiment_name "
 
-                        ;;
+			;;
 
 		--time=*)
-                        old_time=$time
-                        time="${i#*=}"
+			old_time=$time
+			time="${i#*=}"
 
-                        if [[ ! -z $old_time ]]; then
-                                red_text "--time was specified more than once. Using the last one."
+			if [[ ! -z $old_time ]]; then
+				red_text "--time was specified more than once. Using the last one."
 				args_string=$(echo "$args_string" | sed -e 's#\s*--time=[0-9a-zA-Z_]*\s\s*# #')
-                        fi
+			fi
 
 			args_string+=" --time=$time "
 
-                        ;;
-                --time)
-                        old_time=$time
+			;;
+		--time)
+			old_time=$time
 
-                        shift
+			shift
 
 			k=$((k+1))
-                        time="${args[k]}"
+			time="${args[k]}"
 
-                        if [[ ! -z $old_time ]]; then
-                                red_text "--time was specified more than once. Using the last one."
+			if [[ ! -z $old_time ]]; then
+				red_text "--time was specified more than once. Using the last one."
 				args_string=$(echo "$args_string" | sed -e 's#\s*--time=[0-9a-zA-Z_]*\s\s*# #')
-                        fi
+			fi
 
 			args_string+=" --time=$time "
 
-                        ;;
+			;;
 
 		--follow)
 			follow=1
-                        ;;
-                --help*)
+			;;
+		--wait_until_ended)
+			wait_until_ended=1
+			args_string+=" --wait_until_ended "
+			;;
+		-h)
 			help=1
 			args_string+=" --help "
-                        ;;
-                --debug)
-                        set -x
-                        ;;
+			;;
+		--help)
+			help=1
+			args_string+=" --help "
+			;;
+		--debug)
+			debug=1
+			;;
 
 		*)
 			args_string+=" $i "
 			;;
-        esac
+	esac
 	k=$((k+1))
 done
 
+if [[ "$debug" -eq "1" ]]; then
+	set -x
+fi
+
+set +x
 if [[ -d ".git" ]]; then
 	if command -v whiptail 2>/dev/null >/dev/null; then
 		if [[ ! -e .dont_ask_upgrade_main ]]; then
@@ -250,6 +269,10 @@ if [[ -d ".git" ]]; then
 			fi
 		fi
 	fi
+fi
+
+if [[ "$debug" -eq "1" ]]; then
+	set -x
 fi
 
 args_string=$(echo "$args_string" | sed -e 's#\s\s*# #g')
@@ -313,16 +336,29 @@ if [ -n "${SLURM_JOB_ID:-}" ] ; then
 	fi
 fi
 
-echo "source $SCRIPT_DIR/.shellscript_functions"
+set +x
 source $SCRIPT_DIR/.shellscript_functions
 
 mycd "$ORIGINAL_PWD"
+if [[ "$debug" -eq "1" ]]; then
+	set -x
+fi
+
+if [[ "$help" -eq "1" ]]; then
+	python3 $SCRIPT_DIR/.main.py --help
+	exit 0
+fi
 
 if [ -n "${SLURM_JOB_ID:-}" ] || ! command -v sbatch >/dev/null; then
 	# To start all subjobs indenpedently from the main job, unset all SLURM variables
+	set +x
 	for i in $(env | egrep "^SLURM" | sed -e 's#\s*=.*##' | grep -v SLURM_JOB_ID | grep -v SBATCH_RESERVATION); do
 		unset $i
 	done
+
+	if [[ "$debug" -eq "1" ]]; then
+		set -x
+	fi
 
 	if [[ ! -z $SLURM_JOB_ID ]]; then
 		echo -e "To cancel, use '\e[31mscancel $SLURM_JOB_ID\e[0m'"
@@ -330,13 +366,17 @@ if [ -n "${SLURM_JOB_ID:-}" ] || ! command -v sbatch >/dev/null; then
 
 	IFS=$' '
 	export PYTHONPATH=$SCRIPT_DIR:$PYTHONPATH
-	echo "python3 $SCRIPT_DIR/.main.py $args_string"
-	python3 $SCRIPT_DIR/.main.py $args_string &
-	python_pid=$!
+	#echo "python3 $SCRIPT_DIR/.main.py $args_string"
 
 	run_before_end &
 
-	wait "$python_pid"
+	python3 $SCRIPT_DIR/.main.py $args_string
+
+	EXIT_CODE=$?
+
+	tput bel
+
+	exit $EXIT_CODE
 else
 	IFS=$' '
 
@@ -353,18 +393,21 @@ else
 		exit_code=$?
 	fi
 
+	started_job_nr=$(echo "$sbatch_result" | sed -e 's#.*\s##')
+
 	if [[ $exit_code -eq 0 ]]; then
 		if [[ $follow -eq 1 ]]; then
-			started_job_nr=$(echo "$sbatch_result" | sed -e 's#.*\s##')
 			if command -v sbatch 2>/dev/null >/dev/null; then
 				LOG_PATH=$(slurmlogpath $started_job_nr)
-
+	
 				spin[0]="-"
 				spin[1]="\\"
 				spin[2]="|"
 				spin[3]="/"
 
-				echo "Waiting until the path $LOG_PATH exists. When it does, it will automatically be followed. CTRL-c does NOT cancel the optimization, only the tail..."
+				set +x
+
+				echo -n "Waiting until the path $LOG_PATH exists. When it does, it will automatically be followed. CTRL-c does NOT cancel the optimization, only the tail...  "
 
 				while ! [[ -e $LOG_PATH ]]; do
 					for i in "${spin[@]}"; do
@@ -373,12 +416,44 @@ else
 					done
 				done
 
-				echo ""
+				if [[ "$debug" -eq 1 ]]; then
+					set -x
+				fi
+
+				printf "\r"
+
+				tput el
 
 				tail -n1000000 -f $LOG_PATH
 			fi
 		fi
 	else
 		red_text "Failed to start sbatch job. Exit-Code: $exit_code"
+	fi
+
+	if [[ "$wait_until_ended" -eq "1" ]]; then
+		if command -v squeue 2>/dev/null >/dev/null; then
+			yellow_text "Waiting for job $started_job_nr to end... (Checking every 10 seconds)"
+
+			set +x
+
+			seconds_count=0
+
+			echo ""
+
+			while [[ "$(squeue --me | grep $started_job_nr | wc -l)" -ne "0" ]]; do
+				sleep 10
+			done
+
+			echo ""
+
+			if [[ "$debug" -eq 1 ]]; then
+				set -x
+			fi
+
+			yellow_text "Done waiting for job to be ended"
+		else
+			red_text "squeue not found. Cannot wait for job to end."
+		fi
 	fi
 fi
