@@ -169,3 +169,6 @@ list_installed_modules*.log
 *.html
 log
 .nfs*
+._test_run.svg
+.logs
+logs

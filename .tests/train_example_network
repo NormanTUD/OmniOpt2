@@ -1,0 +1,118 @@
+#!/bin/bash
+
+function echoerr() {
+        echo "$@" 1>&2
+}
+
+function yellow_text {
+        echoerr -e "\e\033[0;33m$1\e[0m"
+}
+
+function red_text {
+        echoerr -e "\e[31m$1\e[0m"
+}
+
+function green_text {
+        echoerr -e "\e\033[0;32m$1\e[0m"
+}
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+cd $SCRIPT_DIR
+
+cd test_wronggoing_stuff.bin
+
+function echoerr() {
+        echo "$@" 1>&2
+}
+
+function red_text {
+        echoerr -e "\e[31m$1\e[0m"
+}
+
+set -e
+set -o pipefail
+
+function calltracer () {
+	yellow_text "Git status hash:"
+	git rev-parse HEAD
+        red_text 'Error occured in file/line:'
+        caller
+}
+
+trap 'calltracer' ERR
+
+function help () {
+        echo "Possible options:"
+        echo "  --use-ram-tests                                    Run test that allocates more and more memory"
+        echo "  --help                                             this help"
+        echo "  --debug                                            Enables debug mode (set -x)"
+        exit $1
+}
+
+function join_by {
+	local d=${1-} f=${2-}
+	if shift 2; then
+		printf %s "$f" "${@/#/$d}"
+	fi
+}
+
+export useramtests=0
+
+for i in $@; do
+        case $i in
+                --use-ram-tests)
+                        useramtests=1
+                        shift
+                        ;;
+                -h|--help)
+                        help 0
+                        ;;
+                --debug)
+                        set -x
+                        ;;
+                *)
+                        red_text "Unknown parameter $i" >&2
+                        help 1
+                        ;;
+        esac
+done
+
+PARTITION="alpha"
+NUM_GPUS=0
+
+if command -v nvidia-smi 2>/dev/null >/dev/null; then
+	NUM_GPUS=$(nvidia-smi --list-gpus | wc -l)
+fi
+
+if [[ "$NUM_GPUS" -ne "0" ]]; then
+	NUM_GPUS=1
+fi
+
+cd ..
+cd ..
+
+if [[ -d runs/example_network/ ]]; then
+	rm -rf runs/example_network/
+fi
+
+# run_program = .tests/example_network/run.sh --epochs=%(epochs) --learning_rate=%(learning_rate) --validation_split=%(validation_split) --width=%(width) --height=%(height)
+ ./main \
+	 --partition=$PARTITION \
+	 --experiment_name=example_network \
+	 --mem_gb=5 \
+	 --time=120 \
+	 --worker_timeout=10 \
+	 --max_eval=200 \
+	 --num_parallel_jobs=20 \
+	 --gpus=$NUM_GPUS \
+	 --follow \
+	 --run_program=LnRlc3RzL2V4YW1wbGVfbmV0d29yay9ydW4uc2ggLS1lcG9jaHM9JShlcG9jaHMpIC0tbGVhcm5pbmdfcmF0ZT0lKGxlYXJuaW5nX3JhdGUpIC0tdmFsaWRhdGlvbl9zcGxpdD0lKHZhbGlkYXRpb25fc3BsaXQpIC0td2lkdGg9JSh3aWR0aCkgLS1oZWlnaHQ9JShoZWlnaHQp \
+	 --parameter width range 20 200 int \
+	 --parameter height range 20 200 int \
+	 --parameter validation_split range 0 0.5 float \
+	 --parameter learning_rate range 0.00001 0.1 float \
+	 --parameter epochs range 1 200 int \
+	 --debug
+
+ exit $?

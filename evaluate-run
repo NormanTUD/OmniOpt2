@@ -2,6 +2,8 @@
 
 cd $(pwd)
 
+echo -ne "\033]30;OmniOpt: evaluate-run\007"
+
 mkdir -p debuglogs
 bash_logname=debuglogs/evaluate_run.log
 let i=1
@@ -109,7 +111,7 @@ source .general.sh
 function info_message_large {
 	MSG=$1
 	eval `resize`
-	echo_green "$MSG"
+	#echo_green "$MSG"
 	whiptail --title "Info Message" --msgbox "$MSG" $LINES $COLUMNS
 }
 
@@ -199,7 +201,13 @@ function list_option_for_job {
 		args+=("d)" "Create debug-zip")
 	fi
 
-	WHATTODO=$(whiptail --title "Available options for >${PROJECT}< (run number $NUMBER)" --menu "Chose what to do with >$PROJECT<" $LINES $COLUMNS $(( $LINES - 8 )) "${args[@]}" "b)" "back" "q)" "quit" 3>&1 1>&2 2>&3)
+	CONTINUED_FROM=""
+
+	if [[ -e "$THISPROJECTDIR/$NUMBER/checkpoint_load_source" ]]; then
+		CONTINUED_FROM="$(cat $THISPROJECTDIR/$NUMBER/checkpoint_load_source)"
+	fi
+
+	WHATTODO=$(whiptail --title "Available options for >${PROJECT}< (run number $NUMBER)" --menu "Chose what to do with >$PROJECT<. $CONTINUED_FROM" $LINES $COLUMNS $(( $LINES - 8 )) "${args[@]}" "b)" "back" "q)" "quit" 3>&1 1>&2 2>&3)
 
 	exitstatus=$?
 	if [[ $exitstatus == 0 ]]; then
@@ -835,3 +843,5 @@ if [[ $sourced == "0" ]]; then
 
 	main
 fi
+
+echo -ne "\033]30;$(basename $(pwd)): $(basename $SHELL)\007"

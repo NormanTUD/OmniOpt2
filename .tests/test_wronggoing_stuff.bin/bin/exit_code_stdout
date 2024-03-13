@@ -1,0 +1,5 @@
+#!/bin/bash
+
+echo "STDERR" >&2
+echo "RESULT: $RANDOM"
+exit 5

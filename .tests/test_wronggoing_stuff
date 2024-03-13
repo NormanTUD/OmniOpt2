@@ -1,0 +1,121 @@
+#!/bin/bash
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+cd $SCRIPT_DIR
+
+cd test_wronggoing_stuff.bin
+
+function echoerr() {
+        echo "$@" 1>&2
+}
+
+function red_text {
+        echoerr -e "\e[31m$1\e[0m"
+}
+
+set -e
+set -o pipefail
+
+function calltracer () {
+	yellow_text "Git status hash:"
+	git rev-parse HEAD
+        red_text 'Error occured in file/line:'
+        caller
+}
+
+trap 'calltracer' ERR
+
+function help () {
+        echo "Possible options:"
+        echo "  --use-ram-tests                                    Run test that allocates more and more memory"
+        echo "  --help                                             this help"
+        echo "  --debug                                            Enables debug mode (set -x)"
+        exit $1
+}
+
+function join_by {
+	local d=${1-} f=${2-}
+	if shift 2; then
+		printf %s "$f" "${@/#/$d}"
+	fi
+}
+
+export useramtests=0
+
+for i in $@; do
+        case $i in
+                --use-ram-tests)
+                        useramtests=1
+                        shift
+                        ;;
+                -h|--help)
+                        help 0
+                        ;;
+                --debug)
+                        set -x
+                        ;;
+                *)
+                        red_text "Unknown parameter $i" >&2
+                        help 1
+                        ;;
+        esac
+done
+
+which_programs=(
+	"divide_by_0"
+	"exit_code_no_output"
+	"exit_code_stdout"
+	"exit_code_stdout_stderr"
+	"module_not_found"
+	"result_but_exit_code_stdout_stderr"
+	"signal"
+	"simple_ok"
+	"empty"
+	#"takes_forever"
+	#"takes_forever_but_has_result"
+	"file_does_not_exist"
+	"no_chmod_x"
+	"no_shebang"
+	"perl"
+	"perl_module_fail"
+	"signal_but_has_output"
+	"segfault"
+	"wrong_arch"
+	"python_name_error"
+	"syntax_error"
+	"tensorflow_syntax_error"
+	"force_keyboard_interrupt"
+)
+
+if [[ "$useramtests" -eq "1" ]]; then
+	which_programs+=("allocate_ram_forever")
+fi
+
+which_programs_string=$(join_by , "${which_programs[@]}")
+
+PARTITION="alpha"
+GPUS=0
+
+if [[ "$PARTITION" == "alpha" ]]; then
+	GPUS=1
+fi
+
+NUMBER_OF_EVALS=$(echo "${#which_programs[@]}")
+
+cd ..
+cd ..
+# run_program = ./.tests/test_wronggoing_stuff.bin/bin/%(program)
+./main \
+	--debug \
+	--partition=$PARTITION \
+	--experiment_name=test_wronggoing_stuff \
+	--mem_gb=1 \
+	--time=20 \
+	--worker_timeout=1 \
+	--max_eval=$NUMBER_OF_EVALS \
+	--num_parallel_jobs=50 \
+	--gpus=$GPUS \
+	--run_program=Li8udGVzdHMvdGVzdF93cm9uZ2dvaW5nX3N0dWZmLmJpbi9iaW4vJShwcm9ncmFtKQ== \
+	--parameter program choice $which_programs_string \
+	--follow
