@@ -1,10 +1,13 @@
 val_if_nothing_found = 99999999999999999999999999999999999999999999999999999999999
 NO_RESULT = "{:.0e}".format(val_if_nothing_found)
 
+# idee: single plots zeichnen und mit plotext anzeigen, so dass man einen überblick kriegt
+
 import sys
 import os
 import argparse
 import math
+import time
 
 import signal
 signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -37,7 +40,7 @@ try:
     from itertools import combinations
 except ModuleNotFoundError as e:
     print(f"Error: {e}")
-    sys.exit(0)
+    sys.exit(244)
 
 # Get shell variables or use default values
 BUBBLESIZEINPX = int(os.environ.get('BUBBLESIZEINPX', 15))
@@ -46,22 +49,36 @@ ORIGINAL_PWD = os.environ.get("ORIGINAL_PWD", "")
 if ORIGINAL_PWD:
     os.chdir(ORIGINAL_PWD)
 
-def to_int_when_possible (val):
+def get_current_time():
+    return time.time()
+
+def check_csv_modified(last_modified_time, csv_file_path):
+    current_modified_time = os.path.getmtime(csv_file_path)
+    return current_modified_time > last_modified_time
+
+def to_int_when_possible(val):
     if type(val) == int or (type(val) == float and val.is_integer()) or (type(val) == str and val.isdigit()):
         return int(val)
-    if type(val) == str and re.match(r'^-?\d+(?:\.\d+)$', val) is None:
+    if type(val) == str and re.match(r'^-?\d+(?:\.\d+)?$', val) is None:
         return val
-    return '{:f}'.format(val)
+
+    try:
+        val = float(val)
+
+        return '{:.{}f}'.format(val, len(str(val).split('.')[1])).rstrip('0').rstrip('.')
+    except:
+        return val
+
 
 def set_margins (fig):
     left  = 0.125
-    right = 0.9
+    right = 0.85
     bottom = 0.12
     top = 0.9
     wspace = 0.2
-    hspace = 0.3
+    hspace = 0.6
 
-    fig.subplots_adjust(left=left, bottom=bottom, right=right, top=top, wspace=wspace, hspace=wspace)
+    fig.subplots_adjust(left=left, bottom=bottom, right=right, top=top, wspace=wspace, hspace=hspace)
 
 def check_if_results_are_empty(result_column_values):
     filtered_data = list(filter(lambda x: not math.isnan(x), result_column_values.tolist()))
@@ -186,7 +203,7 @@ def hide_empty_plots(parameter_combinations, num_rows, num_cols, axs):
         col = i % num_cols
         axs[row, col].set_visible(False)
 
-def plot_multiple_graphs(fig, non_empty_graphs, num_cols, axs, df_filtered, colors, cmap, norm, BUBBLESIZEINPX, result_column, parameter_combinations, num_rows):
+def plot_multiple_graphs(fig, non_empty_graphs, num_cols, axs, df_filtered, colors, cmap, norm, result_column, parameter_combinations, num_rows):
     for i, (param1, param2) in enumerate(non_empty_graphs):
         row = i // num_cols
         col = i % num_cols
@@ -204,18 +221,26 @@ def plot_multiple_graphs(fig, non_empty_graphs, num_cols, axs, df_filtered, colo
         axs[row, col].set_visible(False)
 
     # Color bar addition für mehrere Subplots
-    cbar = fig.colorbar(scatter, ax=axs, orientation='vertical', fraction=0.02, pad=0.1)
-    cbar.set_label(result_column, rotation=270, labelpad=15)
+    if not args.print_to_command_line:
+        cbar = fig.colorbar(scatter, ax=axs, orientation='vertical', fraction=0.02, pad=0.1)
+        cbar.set_label(result_column, rotation=270, labelpad=15)
 
-def plot_two_graphs(axs, df_filtered, non_empty_graphs, colors, cmap, norm, BUBBLESIZEINPX, result_column):
+        cbar.formatter.set_scientific(False)
+        cbar.formatter.set_useMathText(False)
+
+def plot_two_graphs(axs, df_filtered, non_empty_graphs, colors, cmap, norm, result_column):
     scatter = axs.scatter(df_filtered[non_empty_graphs[0][0]], df_filtered[non_empty_graphs[0][1]], c=colors, cmap=cmap, norm=norm, s=BUBBLESIZEINPX)
     axs.set_xlabel(non_empty_graphs[0][0])
     axs.set_ylabel(non_empty_graphs[0][1])
     # Farbgebung und Legende für das einzelne Scatterplot
-    cbar = fig.colorbar(scatter, ax=axs, orientation='vertical', fraction=0.02, pad=0.1)
-    cbar.set_label(result_column, rotation=270, labelpad=15)
+    if not args.print_to_command_line:
+        cbar = fig.colorbar(scatter, ax=axs, orientation='vertical', fraction=0.02, pad=0.1)
+        cbar.set_label(result_column, rotation=270, labelpad=15)
 
-def plot_single_graph (fig, axs, df_filtered, colors, cmap, norm, BUBBLESIZEINPX, result_column, non_empty_graphs):
+        cbar.formatter.set_scientific(False)
+        cbar.formatter.set_useMathText(False)
+
+def plot_single_graph (fig, axs, df_filtered, colors, cmap, norm, result_column, non_empty_graphs):
     ax = axs  # Use the single axis
     _range = range(len(df_filtered))
     _data = df_filtered
@@ -233,10 +258,14 @@ def plot_single_graph (fig, axs, df_filtered, colors, cmap, norm, BUBBLESIZEINPX
     ax.set_xlabel(non_empty_graphs[0][0])
     ax.set_ylabel(result_column)
 
-    cbar = fig.colorbar(scatter, ax=ax, orientation='vertical', fraction=0.02, pad=0.1)
-    cbar.set_label(result_column, rotation=270, labelpad=15)
+    if not args.print_to_command_line:
+        cbar = fig.colorbar(scatter, ax=ax, orientation='vertical', fraction=0.02, pad=0.1)
+        cbar.set_label(result_column, rotation=270, labelpad=15)
 
-def plot_graphs(df, args, fig, axs, df_filtered, BUBBLESIZEINPX, result_column, non_empty_graphs, num_subplots, parameter_combinations, num_rows, num_cols):
+        cbar.formatter.set_scientific(False)
+        cbar.formatter.set_useMathText(False)
+
+def plot_graphs(df, args, fig, axs, df_filtered, result_column, non_empty_graphs, num_subplots, parameter_combinations, num_rows, num_cols):
     colors = get_colors(df, result_column)
 
     if os.path.exists(args.run_dir + "/maximize"):
@@ -257,11 +286,11 @@ def plot_graphs(df, args, fig, axs, df_filtered, BUBBLESIZEINPX, result_column, 
 
     if num_subplots == 1:
         if len(non_empty_graphs[0]) == 1:
-            plot_single_graph(fig, axs, df_filtered, colors, cmap, norm, BUBBLESIZEINPX, result_column, non_empty_graphs)
+            plot_single_graph(fig, axs, df_filtered, colors, cmap, norm, result_column, non_empty_graphs)
         else:
-            plot_two_graphs(axs, df_filtered, non_empty_graphs, colors, cmap, norm, BUBBLESIZEINPX, result_column)
+            plot_two_graphs(axs, df_filtered, non_empty_graphs, colors, cmap, norm, result_column)
     else:
-        plot_multiple_graphs(fig, non_empty_graphs, num_cols, axs, df_filtered, colors, cmap, norm, BUBBLESIZEINPX, result_column, parameter_combinations, num_rows)
+        plot_multiple_graphs(fig, non_empty_graphs, num_cols, axs, df_filtered, colors, cmap, norm, result_column, parameter_combinations, num_rows)
 
     hide_empty_plots(parameter_combinations, num_rows, num_cols, axs)
 
@@ -274,9 +303,17 @@ def get_args ():
     parser.add_argument('--min', type=float, help='Minimum value', default=None)
     parser.add_argument('--result_column', type=str, help='Name of the result column', default="result")
     parser.add_argument('--debug', help='Enable debugging', action='store_true', default=False)
-    parser.add_argument('--dark_theme', help='Enable darktheme', action='store_true', default=False)
+    parser.add_argument('--delete_temp', help='Delete temp files', action='store_true', default=False)
+    parser.add_argument('--darkmode', help='Enable darktheme', action='store_true', default=False)
+    parser.add_argument('--print_to_command_line', help='Print plot to command line', action='store_true', default=False)
+    parser.add_argument('--single', help='Print plot to command line', action='store_true', default=False)
+    parser.add_argument('--bubblesize', type=int, help='Size of the bubbles', default=7)
 
     args = parser.parse_args()
+
+    if args.bubblesize:
+        global BUBBLESIZEINPX
+        BUBBLESIZEINPX = args.bubblesize
 
     check_args(args)
 
@@ -354,6 +391,9 @@ def get_parameter_combinations (df_filtered, result_column):
 
     parameter_combinations = list(combinations(df_filtered_cols, r))
 
+    if len(parameter_combinations) == 0:
+        parameter_combinations = [*df_filtered_cols]
+
     return parameter_combinations
 
 def use_matplotlib(args):
@@ -367,7 +407,21 @@ def get_result_column_values(df, result_column):
 
     return result_column_values
 
+def plot_image_to_command_line(title, path):
+    path = os.path.abspath(path)
+    if not os.path.exists(path):
+        dier(f"Cannot continue: {path} does not exist")
+    try:
+        import plotext as plt
+
+        plt.image_plot(path)
+        plt.title(title)
+        plt.show()
+    except ModuleNotFoundError:
+        dier("Cannot plot without plotext being installed")
+
 def main(args):
+    #plot_image_to_command_line("test", "runs/__main__tests__/1/2d-scatterplots/__main__tests__.jpg")
     result_column = os.getenv("OO_RESULT_COLUMN_NAME", args.result_column)
 
     use_matplotlib(args)
@@ -392,18 +446,25 @@ def main(args):
 
     fig, axs = plt.subplots(num_rows, num_cols, figsize=(15*num_cols, 7*num_rows))
 
-    plot_graphs(df, args, fig, axs, df_filtered, BUBBLESIZEINPX, result_column, non_empty_graphs, num_subplots, parameter_combinations, num_rows, num_cols)
+    plot_graphs(df, args, fig, axs, df_filtered, result_column, non_empty_graphs, num_subplots, parameter_combinations, num_rows, num_cols)
 
     result_column_values = get_result_column_values(df, result_column)
 
-    set_title(fig, args, df_filtered, result_column_values, len(df_filtered))
+    if not args.print_to_command_line:
+        set_title(fig, args, df_filtered, result_column_values, len(df_filtered))
 
-    #set_margins(fig)
+        set_margins(fig)
 
-    fig.canvas.manager.set_window_title(args.run_dir)
+        fig.canvas.manager.set_window_title(args.run_dir)
 
     if args.save_to_file:
         plt.savefig(args.save_to_file)
+
+        if args.print_to_command_line:
+            if ".jpg" in args.save_to_file or ".png" in args.save_to_file:
+                plot_image_to_command_line("plot", args.save_to_file)
+            else:
+                print("only jpg and png are currently supported")
     else:
         plt.show()
 
@@ -413,7 +474,7 @@ if __name__ == "__main__":
 
         theme = "ggplot"
 
-        if args.dark_theme:
+        if args.darkmode:
             theme = "dark_background"
 
         with plt.style.context(theme):

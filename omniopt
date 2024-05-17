@@ -1,5 +1,21 @@
 #!/bin/bash
 
+function displaytime {
+	local T=$1
+		local D=$((T/60/60/24))
+		local H=$((T/60/60%24))
+		local M=$((T/60%60))
+		local S=$((T%60))
+		(( $D > 0 )) && printf '%d days ' $D
+		(( $H > 0 )) && printf '%d hours ' $H
+		(( $M > 0 )) && printf '%d minutes ' $M
+		(( $D > 0 || $H > 0 || $M > 0 )) && printf 'and '
+		printf '%d seconds\n' $S
+}
+
+#SBATCH --signal=B:USR1@200
+
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export ORIGINAL_PWD=$(pwd)
 
 echo -ne "\033]30;OmniOpt\007"
@@ -41,9 +57,58 @@ function calltracer () {
 	git rev-parse HEAD
         red_text 'Error occured in file/line:'
         caller
+
+	echo "Runtime: $(displaytime $SECONDS)"
+	echo -ne "\033]30;OmniOpt: Failed\007"
+	tput bel
+	echo -ne "\033]30;$(basename $(pwd)): $(basename $SHELL)\007"
+}
+
+already_sent_signal=
+
+kill_python_if_started () {
+	REASON=$1
+	echo "kill_python_if_started $REASON"
+	re='^[0-9]+$'
+	if ! [[ -z "$SLURM_JOB_ID" ]]; then
+		if [[ $python_pid =~ $re ]] ; then
+			if [[ -z "$already_sent_signal" ]]; then
+				if ps auxf | grep $python_pid 2>/dev/null >/dev/null; then
+					already_sent_signal=1
+					echo -e "\nSending USR1 to $python_pid (python). Reason: $REASON"
+					kill -USR1 "$python_pid"
+				else
+					echo "Could not find $python_pid process" >&2
+				fi
+			fi
+		fi
+	fi
+
+	echo "Runtime: $(displaytime $SECONDS)"
+	echo -ne "\033]30;OmniOpt: Failed\007"
+	tput bel
+	echo -ne "\033]30;$(basename $(pwd)): $(basename $SHELL)\007"
 }
 
 trap 'calltracer' ERR
+trap 'kill_python_if_started CONT' CONT
+trap 'kill_python_if_started TERM' TERM
+
+for i in $(kill -l 2>&1 | sed -e 's#[0-9][0-9]*\s*)##g'); do
+	if
+		[[ "$i" != "ERR" ]] &&
+		[[ "$i" != "CONT" ]] &&
+		[[ "$i" != "TERM" ]] &&
+		[[ "$i" != "CHLD" ]] &&
+		[[ "$i" != "SIGCHLD" ]] &&
+		[[ "$i" != "SIGWINCH" ]] &&
+		[[ "$i" != "WINCH" ]] &&
+		[[ "$i" != "INT" ]] &&
+		[[ "$i" != "SIGINT" ]];
+	then
+		trap "kill_python_if_started $i" $i
+	fi
+done
 
 minutes_to_hh_mm_ss() {
 	var=$1
@@ -321,6 +386,8 @@ if [[ "$debug" -eq "1" ]]; then
 	set -x
 fi
 
+echo "Current git-hash: $(git rev-parse HEAD)"
+
 set +x
 if [[ -d ".git" ]]; then
 	if command -v whiptail 2>/dev/null >/dev/null; then
@@ -410,27 +477,24 @@ if [[ "$continue_previous_job" != "" ]]; then
 	fi
 fi
 
-sent_usr_signal_to_script=0
-python_pid=
+python_pid=""
 
 JOB_START_TIME=$SLURM_JOB_START_TIME
 JOB_END_TIME=$SLURM_JOB_END_TIME
 
 run_before_end () {
-	if command -v sbatch >/dev/null; then
-		sleep_time=$((JOB_END_TIME - JOB_START_TIME - 30))
-		# Überprüfen, ob die Zeitdifferenz positiv ist, um zu vermeiden, dass das Skript im negativen Bereich schläft
-		if [ $sleep_time -gt 0 ]; then
-			sleep $sleep_time
+	if [[ -z "$already_sent_signal" ]]; then
+		if command -v sbatch >/dev/null; then
+			# Weird solution, but signals never reached for some reason, and this... works?
+			sleep_time=$((JOB_END_TIME - JOB_START_TIME - 100))
+			# Überprüfen, ob die Zeitdifferenz positiv ist, um zu vermeiden, dass das Skript im negativen Bereich schläft
+			if [ $sleep_time -gt 0 ]; then
+				sleep $sleep_time
 
-			if [[ $sent_usr_signal_to_script -eq 0 ]]; then
-				sent_usr_signal_to_script=1
-				kill -USR1 "$python_pid"
+				kill_python_if_started "Timeout"
 			else
-				echo "Already sent user signal to python PID $python_pid. Not doing that again."
+				echo "It is recommended that you run this in a slurm job."
 			fi
-		else
-			echo "It is recommended that you run this in a slurm job."
 		fi
 	fi
 }
@@ -507,13 +571,22 @@ if [ -n "${SLURM_JOB_ID:-}" ] || ! command -v sbatch >/dev/null; then
 	export PYTHONPATH=$SCRIPT_DIR:$PYTHONPATH
 	#echo "python3 $SCRIPT_DIR/.omniopt.py $args_string"
 
-	run_before_end &
+	#run_before_end &
 
 	set +e
-	python3 $SCRIPT_DIR/.omniopt.py $args_string
+	python3 $SCRIPT_DIR/.omniopt.py $args_string &
+	python_pid=$!
+	wait $python_pid
+	EXIT_CODE=$?
+
 	set -e
 
-	EXIT_CODE=$?
+	if [[ "$EXIT_CODE" -ne "0" ]]; then
+		echo -ne "\033]30;OmniOpt: Failed\007"
+		echo "Exiting with exit-code $EXIT_CODE"
+	else
+		echo -ne "\033]30;OmniOpt: done\007"
+	fi
 
 	tput bel
 
@@ -548,7 +621,7 @@ else
 
 				set +x
 
-				echo -n "Waiting until the path $LOG_PATH exists. When it does, it will automatically be followed. CTRL-c does NOT cancel the optimization, only the tail...  "
+				echo -n "Waiting until the path $LOG_PATH exists. CTRL-c does NOT cancel the optimization, only the tail...  "
 
 				while ! [[ -e $LOG_PATH ]]; do
 					for i in "${spin[@]}"; do
@@ -622,4 +695,5 @@ else
 
 fi
 
+echo "Runtime: $(displaytime $SECONDS)"
 echo -ne "\033]30;$(basename $(pwd)): $(basename $SHELL)\007"

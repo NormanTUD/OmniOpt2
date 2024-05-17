@@ -1,6 +1,33 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
+function displaytime {
+	local T=$1
+		local D=$((T/60/60/24))
+		local H=$((T/60/60%24))
+		local M=$((T/60%60))
+		local S=$((T%60))
+		(( $D > 0 )) && printf '%d days ' $D
+		(( $H > 0 )) && printf '%d hours ' $H
+		(( $M > 0 )) && printf '%d minutes ' $M
+		(( $D > 0 || $H > 0 || $M > 0 )) && printf 'and '
+		printf '%d seconds\n' $S
+}
+
+function error_message {
+	eval `resize`
+	MSG=$1
+	echo_red "$MSG"
+	export NEWT_COLORS='
+window=,red
+border=white,red
+textbox=white,red
+button=black,white
+'
+    whiptail --title "Error Message" --msgbox "$MSG" $LINES $COLUMNS $(( $LINES - 8 ))
+	export NEWT_COLORS=""
+}
+
 export RUN_VIA_RUNSH=1
 
 export PYTHONDONTWRITEBYTECODE=1
@@ -100,6 +127,8 @@ if [[ "$SCRIPT_DIR" != *"$VENV_DIR"* ]]; then
 		ppip Pyarrow
 		ppip textual
 		ppip tqdm
+		ppip plotext
+		ppip plotille
 	fi
 
 	source $VENV_DIR/bin/activate

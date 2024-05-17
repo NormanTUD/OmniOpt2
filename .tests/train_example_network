@@ -42,11 +42,27 @@ function calltracer () {
 
 trap 'calltracer' ERR
 
+export max_eval=200
+export num_parallel_jobs=20
+export worker_timeout=30
+export mem_gb=5
+export runtime=300
+export not_all_at_once=0
+export max_epochs=10
+export follow=0
+
 function help () {
+        echo "train_example_network: Trains an example network from asanAI for testing OmniOpt"
         echo "Possible options:"
-        echo "  --use-ram-tests                                    Run test that allocates more and more memory"
         echo "  --help                                             this help"
         echo "  --debug                                            Enables debug mode (set -x)"
+	echo "  --num_parallel_jobs=n                              Number of parallel jobs (default: $num_parallel_jobs)"
+	echo "  --worker_timeout=n                                 Number of minutes for a single-worker to timeout (default: $worker_timeout)"
+	echo "  --mem_gb=n                                         Memory in GB (default $mem_gb)"
+	echo "  --time=n                                           Max runtime in minutes (default: $runtime)"
+	echo "  --max_eval=n                                       Max number of evals (default: $max_eval)"
+	echo "  --max_epochs=n                                     Number of max epochs (default: $max_epochs)"
+	echo "  --follow                                           Follow the output (default: $follow)"
         exit $1
 }
 
@@ -57,12 +73,34 @@ function join_by {
 	fi
 }
 
-export useramtests=0
-
 for i in $@; do
         case $i in
-                --use-ram-tests)
-                        useramtests=1
+		--mem_gb=*)
+			mem_gb="${i#*=}"
+			shift
+			;;
+		--worker_timeout=*)
+			worker_timeout="${i#*=}"
+			shift
+			;;
+		--num_parallel_jobs=*)
+			num_parallel_jobs="${i#*=}"
+			shift
+			;;
+		--time=*)
+			runtime="${i#*=}"
+			shift
+			;;
+		--max_epochs=*)
+			max_epochs="${i#*=}"
+			shift
+			;;
+		--max_eval=*)
+			max_eval="${i#*=}"
+			shift
+			;;
+                --follow)
+                        follow=1
                         shift
                         ;;
                 -h|--help)
@@ -92,27 +130,46 @@ fi
 cd ..
 cd ..
 
-if [[ -d runs/example_network/ ]]; then
-	rm -rf runs/example_network/
-fi
+#if [[ -d runs/example_network/ ]]; then
+#	rm -rf runs/example_network/
+#fi
 
 # run_program = .tests/example_network/run.sh --epochs=%(epochs) --learning_rate=%(learning_rate) --validation_split=%(validation_split) --width=%(width) --height=%(height)
- ./omniopt \
-	 --partition=$PARTITION \
-	 --experiment_name=example_network \
-	 --mem_gb=5 \
-	 --time=120 \
-	 --worker_timeout=10 \
-	 --max_eval=100 \
-	 --num_parallel_jobs=20 \
-	 --gpus=$NUM_GPUS \
-	 --follow \
-	 --run_program=LnRlc3RzL2V4YW1wbGVfbmV0d29yay9ydW4uc2ggLS1lcG9jaHM9JShlcG9jaHMpIC0tbGVhcm5pbmdfcmF0ZT0lKGxlYXJuaW5nX3JhdGUpIC0tdmFsaWRhdGlvbl9zcGxpdD0lKHZhbGlkYXRpb25fc3BsaXQpIC0td2lkdGg9JSh3aWR0aCkgLS1oZWlnaHQ9JShoZWlnaHQp \
-	 --parameter width range 20 80 int \
-	 --parameter height range 20 80 int \
-	 --parameter validation_split range 0 0.4 float \
-	 --parameter learning_rate range 0.00001 0.2 float \
-	 --parameter epochs range 1 100 int \
-	 --debug
+
+if [[ "$follow" -eq "1" ]]; then
+	 ./omniopt \
+		 --partition=$PARTITION \
+		 --experiment_name=example_network \
+		 --mem_gb=$mem_gb \
+		 --time=$runtime \
+		 --worker_timeout=$worker_timeout \
+		 --max_eval=$max_eval \
+		 --num_parallel_jobs=$num_parallel_jobs \
+		 --gpus=$NUM_GPUS \
+		 --run_program=$(echo "bash $SCRIPT_DIR/example_network/run.sh --learning_rate=%(learning_rate) --epochs=%(epochs) --validation_split=%(validation_split) --width=%(width) --height=%(height)" | base64 -w 0)\
+		 --parameter width range 20 80 int \
+		 --parameter height range 20 80 int \
+		 --parameter validation_split range 0 0.4 float \
+		 --parameter learning_rate range 0.001 0.4 float \
+		 --parameter epochs range 1 $max_epochs int \
+		 --follow
+else
+
+	 ./omniopt \
+		 --partition=$PARTITION \
+		 --experiment_name=example_network \
+		 --mem_gb=$mem_gb \
+		 --time=$runtime \
+		 --worker_timeout=$worker_timeout \
+		 --max_eval=$max_eval \
+		 --num_parallel_jobs=$num_parallel_jobs \
+		 --gpus=$NUM_GPUS \
+		 --run_program=$(echo "bash $SCRIPT_DIR/example_network/run.sh --learning_rate=%(learning_rate) --epochs=%(epochs) --validation_split=%(validation_split) --width=%(width) --height=%(height)" | base64 -w 0)\
+		 --parameter width range 20 80 int \
+		 --parameter height range 20 80 int \
+		 --parameter validation_split range 0 0.4 float \
+		 --parameter learning_rate range 0.001 0.4 float \
+		 --parameter epochs range 1 $max_epochs int
+fi
 
 exit $?
