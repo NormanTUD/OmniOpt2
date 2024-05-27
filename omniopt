@@ -1,5 +1,31 @@
 #!/bin/bash
 
+# Idea for how this works and is implemented technically:
+# This main script that is supposed to be called is a bash script.
+# Step 1:
+# , it checks whether the environment already exists, and
+# if so, loads it.
+# If it doesn't exist. it creates it in 
+# ~/.omniax_$(uname -m)
+# i.e. e.g. ~/.omniax__x86_64.
+# Then it installs all modules. Then it loads the environment and the job
+# continues.
+# These steps are skipped, when you installed it as a module. Then,
+# the module environment is the used environment.
+# This logic is defined in .shellscript_functions
+# Step 2:
+# It checks whether sbatch is installed. If so, it will re-start
+# itself as a bascript in a slurmjob.
+# If not, the python-script with the parsed parameters are run directly.
+# Otherwise, the python-script is started inside the sbatch-script,
+# which's end is awaited (by checking squeue every 10 seconds in the
+# background if the started job is still there, and, if --follow is
+# defined, a tail -f on the slurm.out file is loaded in the foreground).
+# This way, the whole slurm procedure is transparent to the user,
+# and the program looks basically the same on every device.
+
+export NO_WHIPTAIL=1
+
 function displaytime {
 	local T=$1
 		local D=$((T/60/60/24))
@@ -17,8 +43,6 @@ function displaytime {
 
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export ORIGINAL_PWD=$(pwd)
-
-echo -ne "\033]30;OmniOpt\007"
 
 set -e
 set -o pipefail
@@ -52,16 +76,13 @@ function red_text {
 }
 
 function calltracer () {
-	echo -ne "\033]30;$(basename $(pwd)): $(basename $SHELL)\007"
 	yellow_text "Git status hash:"
 	git rev-parse HEAD
         red_text 'Error occured in file/line:'
         caller
 
 	echo "Runtime: $(displaytime $SECONDS)"
-	echo -ne "\033]30;OmniOpt: Failed\007"
 	tput bel
-	echo -ne "\033]30;$(basename $(pwd)): $(basename $SHELL)\007"
 }
 
 already_sent_signal=
@@ -85,9 +106,7 @@ kill_python_if_started () {
 	fi
 
 	echo "Runtime: $(displaytime $SECONDS)"
-	echo -ne "\033]30;OmniOpt: Failed\007"
 	tput bel
-	echo -ne "\033]30;$(basename $(pwd)): $(basename $SHELL)\007"
 }
 
 trap 'calltracer' ERR
@@ -386,7 +405,10 @@ if [[ "$debug" -eq "1" ]]; then
 	set -x
 fi
 
-echo "Current git-hash: $(git rev-parse HEAD)"
+
+if [[ -z "$SLURM_JOB_ID" ]]; then
+	echo "Current git-hash: $(git rev-parse HEAD)"
+fi
 
 set +x
 if [[ -d ".git" ]]; then
@@ -503,14 +525,19 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 if [ -n "${SLURM_JOB_ID:-}" ] ; then
 	set +e
-	SLURM_FILE_SCRIPT_DIR=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/Command=/{print $2}')
-	SLURM_FILE_SCRIPT_DIR=$(dirname $SLURM_FILE_SCRIPT_DIR)
-	set -e
+	if command -v scontrol 2>/dev/null >/dev/null; then
+		SLURM_FILE_SCRIPT_DIR=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/Command=/{print $2}')
+		SLURM_FILE_SCRIPT_DIR=$(dirname $SLURM_FILE_SCRIPT_DIR)
+		set -e
 
-	if [[ -d $SLURM_FILE_SCRIPT_DIR ]]; then
-		SCRIPT_DIR="$SLURM_FILE_SCRIPT_DIR"
+		if [[ -d $SLURM_FILE_SCRIPT_DIR ]]; then
+			SCRIPT_DIR="$SLURM_FILE_SCRIPT_DIR"
+		else
+			echo "SLURM_FILE_SCRIPT_DIR $SLURM_FILE_SCRIPT_DIR not found, even though SLURM_JOB_ID exists ($SLURM_JOB_ID). Using SCRIPT_DIR=$SCRIPT_DIR"
+		fi
 	else
-		echo "SLURM_FILE_SCRIPT_DIR $SLURM_FILE_SCRIPT_DIR not found, even though SLURM_JOB_ID exists ($SLURM_JOB_ID). Using SCRIPT_DIR=$SCRIPT_DIR"
+		red_text "scontrol not found. Unsetting SLURM_JOB_ID"
+		unset SLURM_JOB_ID
 	fi
 fi
 
@@ -582,10 +609,7 @@ if [ -n "${SLURM_JOB_ID:-}" ] || ! command -v sbatch >/dev/null; then
 	set -e
 
 	if [[ "$EXIT_CODE" -ne "0" ]]; then
-		echo -ne "\033]30;OmniOpt: Failed\007"
 		echo "Exiting with exit-code $EXIT_CODE"
-	else
-		echo -ne "\033]30;OmniOpt: done\007"
 	fi
 
 	tput bel
@@ -650,6 +674,8 @@ else
 					if [[ "$debug" -eq "1" ]]; then
 						set -x
 					fi
+
+					exit_code=$(cat $LOG_PATH | grep -i "exit-code" | sed -e 's#Exit-Code:\s*##i')
 				else
 					red_text "$LOG_PATH could not be found"
 				fi
@@ -696,4 +722,4 @@ else
 fi
 
 echo "Runtime: $(displaytime $SECONDS)"
-echo -ne "\033]30;$(basename $(pwd)): $(basename $SHELL)\007"
+exit $exit_code

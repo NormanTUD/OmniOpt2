@@ -38,9 +38,6 @@ Green='\033[0;32m'
 Color_Off='\033[0m'
 Red='\033[0;31m'
 
-VENV_DIR_NAME=.omniax_$(uname -m)
-VENV_DIR=$HOME/$VENV_DIR_NAME
-
 function red {
 	echo -e "${Red}$1${Color_Off}"
 }
@@ -48,6 +45,27 @@ function red {
 function green {
 	echo -e "${Green}$1${Color_Off}"
 }
+
+set -e
+
+LMOD_DIR=/software/foundation/$(uname -m)/lmod/lmod/libexec
+
+myml () {
+	if [[ -e $LMOD_DIR/ml_cmd ]]; then
+		eval "$($LMOD_DIR/ml_cmd "$@")" 2>/dev/null >/dev/null
+	fi
+}
+
+if [ -z "$LOAD_MODULES" ] || [ "$LOAD_MODULES" -eq 1 ]; then
+	myml release/23.04 GCCcore/12.2.0 Python/3.10.8 GCCcore/11.3.0 Tkinter/3.10.4
+
+	if [[ $(uname -m) == "ppc64le" ]]; then
+		myml GCC/12.2.0 OpenBLAS/0.3.21
+	fi
+fi
+
+VENV_DIR_NAME=.omniax_$(uname -m)_$(python3 --version | sed -e 's# #_#g')
+VENV_DIR=$HOME/$VENV_DIR_NAME
 
 function ppip {
 	pip3 install $* || {
@@ -62,25 +80,6 @@ function ppip {
 
 	green "$* installed successfully"
 }
-
-set -e
-
-LMOD_DIR=/software/foundation/$(uname -m)/lmod/lmod/libexec
-
-myml () {
-	if [[ -e $LMOD_DIR/ml_cmd ]]; then
-		eval "$($LMOD_DIR/ml_cmd "$@")" 2>/dev/null >/dev/null
-	fi
-}
-
-
-if [ -z "$LOAD_MODULES" ] || [ "$LOAD_MODULES" -eq 1 ]; then
-	myml release/23.04 GCCcore/12.2.0 Python/3.10.8 GCCcore/11.3.0 Tkinter/3.10.4
-
-	if [[ $(uname -m) == "ppc64le" ]]; then
-		myml GCC/12.2.0 OpenBLAS/0.3.21
-	fi
-fi
 
 if [[ "$SCRIPT_DIR" != *"$VENV_DIR"* ]]; then
 	if [[ ! -d "$VENV_DIR" ]]; then
@@ -114,8 +113,6 @@ if [[ "$SCRIPT_DIR" != *"$VENV_DIR"* ]]; then
 
 		green "Virtual Environment activated. Now installing software. This may take some time."
 
-
-
 		pip install --upgrade pip
 
 		ppip Rich
@@ -129,6 +126,9 @@ if [[ "$SCRIPT_DIR" != *"$VENV_DIR"* ]]; then
 		ppip tqdm
 		ppip plotext
 		ppip plotille
+		ppip watchdog
+		ppip seaborn
+		ppip tkinter
 	fi
 
 	source $VENV_DIR/bin/activate

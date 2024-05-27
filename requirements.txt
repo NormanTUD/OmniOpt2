@@ -11,3 +11,5 @@ matplotlib
 Pyarrow
 textual
 tqdm
+watchdog
+seaborn
