@@ -13,3 +13,9 @@ textual
 tqdm
 watchdog
 seaborn
+art
+pyvista
+catsay
+sixel
+pytz
+tzlocal

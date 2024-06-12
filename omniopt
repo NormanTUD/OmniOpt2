@@ -3,16 +3,19 @@
 # Idea for how this works and is implemented technically:
 # This main script that is supposed to be called is a bash script.
 # Step 1:
-# , it checks whether the environment already exists, and
+# It checks whether the environment already exists, and
 # if so, loads it.
 # If it doesn't exist. it creates it in 
-# ~/.omniax_$(uname -m)
-# i.e. e.g. ~/.omniax__x86_64.
+# ~/.omniax_$(uname -m)_$(python3 --version | sed -e 's# #_#g')
+# i.e. e.g. ~/.omniax_x86_64_Python_3.11.2/ . This is done so that there
+# is no need for multiple installations, so that, once installed, it doesn't 
+# need to be installed again.
 # Then it installs all modules. Then it loads the environment and the job
-# continues.
+# continues. It also does pip freeze to check if new modules need to be
+# installed and if the environment already exists, but the new modules are 
+# missing, they will be installed automatically.
 # These steps are skipped, when you installed it as a module. Then,
 # the module environment is the used environment.
-# This logic is defined in .shellscript_functions
 # Step 2:
 # It checks whether sbatch is installed. If so, it will re-start
 # itself as a bascript in a slurmjob.
@@ -23,10 +26,18 @@
 # defined, a tail -f on the slurm.out file is loaded in the foreground).
 # This way, the whole slurm procedure is transparent to the user,
 # and the program looks basically the same on every device.
+# This logic is defined in .shellscript_functions
+
+if [[ ! -z $PRINT_SEPERATOR ]]; then # for tests, so that things are properly visually seperated
+	echo ""
+	echo "========================================================================"
+	echo ""
+fi
 
 export NO_WHIPTAIL=1
 
 function displaytime {
+	set +x
 	local T=$1
 		local D=$((T/60/60/24))
 		local H=$((T/60/60%24))
@@ -37,6 +48,88 @@ function displaytime {
 		(( $M > 0 )) && printf '%d minutes ' $M
 		(( $D > 0 || $H > 0 || $M > 0 )) && printf 'and '
 		printf '%d seconds\n' $S
+}
+
+function remaining_time {
+	target_date="$1"
+	target_date=$(echo "$target_date" | sed -E 's/\x1b\[[0-9;]*m//g')
+
+	target_epoch=$(date -d "$target_date" +%s)
+
+	current_epoch=$(date +%s)
+
+	difference=$(( target_epoch - current_epoch ))
+
+	if [ $difference -lt 0 ]; then
+		return
+	fi
+
+	difference_minutes=$(( difference / 60 ))
+
+	if [ $difference_minutes -lt 30 ]; then
+		minutes=$difference_minutes
+		if [ $minutes -eq 1 ]; then
+			result="in about $minutes minute"
+		else
+			result="in about $minutes minutes"
+		fi
+		echo "$result"
+		return
+	fi
+
+	difference_rounded=$(( (difference + 299) / 300 * 5 ))
+
+	minutes=$(( difference_rounded % 60 ))
+	hours=$(( (difference_rounded / 60) % 24 ))
+	days=$(( (difference_rounded / 1440) % 365 ))
+	years=$(( difference_rounded / 525600 ))
+
+	result=""
+	if [ $years -gt 0 ]; then
+		year_str="year"
+		if [ $years -gt 1 ]; then
+			year_str="years"
+		fi
+		result="$result $years $year_str"
+	fi
+
+	if [ $days -gt 0 ]; then
+		day_str="day"
+		if [ $days -gt 1 ]; then
+			day_str="days"
+		fi
+		if [ -n "$result" ]; then
+			result="$result and"
+		fi
+		result="$result $days $day_str"
+	fi
+
+	if [ $hours -gt 0 ]; then
+		hour_str="hour"
+		if [ $hours -gt 1 ]; then
+			hour_str="hours"
+		fi
+		if [ -n "$result" ]; then
+			result="$result and"
+		fi
+		result="$result $hours $hour_str"
+	fi
+
+	if [ $minutes -gt 0 ]; then
+		minute_str="minute"
+		if [ $minutes -gt 1 ]; then
+			minute_str="minutes"
+		fi
+		if [ -n "$result" ]; then
+			result="$result and"
+		fi
+		result="$result $minutes $minute_str"
+	fi
+
+	if [ -n "$result" ]; then
+		result="in about $result"
+		echo "$result"
+	fi
 }
 
 #SBATCH --signal=B:USR1@200
@@ -76,10 +169,10 @@ function red_text {
 }
 
 function calltracer () {
-	yellow_text "Git status hash:"
-	git rev-parse HEAD
-        red_text 'Error occured in file/line:'
-        caller
+	LINE_AND_FUNCTION=$(caller)
+	if [[ "$LINE_AND_FUNCTION" != *"./omniopt"* ]] && [[ "$LINE_AND_FUNCTION" != *"./.tests/main_tests"* ]];  then
+		red_text "Error occured in file/line: $LINE_AND_FUNCTION"
+	fi
 
 	echo "Runtime: $(displaytime $SECONDS)"
 	tput bel
@@ -471,9 +564,14 @@ if [[ $tests -eq 0 ]]; then
 fi
 
 if [[ "$continue_previous_job" != "" ]]; then
+	if [[ ! -d "$continue_previous_job" ]]; then
+		echo "The folder $continue_previous_job was not found"
+		exit 105
+	fi
+
 	if [[ -z "$mem_gb" ]]; then
-		if [[ -e "$continue_previous_job/mem_gb" ]]; then
-			mem_gb=$(cat "$continue_previous_job/mem_gb")
+		if [[ -e "$continue_previous_job/state_files/mem_gb" ]]; then
+			mem_gb=$(cat "$continue_previous_job/state_files/mem_gb")
 		else
 			echo "mem_gb could not be determined from previous run or --mem_gb"
 			exit 105
@@ -481,8 +579,8 @@ if [[ "$continue_previous_job" != "" ]]; then
 	fi
 
 	if [[ -z "$gpus" ]]; then
-		if [[ -e "$continue_previous_job/gpus" ]]; then
-			gpus=$(cat "$continue_previous_job/gpus")
+		if [[ -e "$continue_previous_job/state_files/gpus" ]]; then
+			gpus=$(cat "$continue_previous_job/state_files/gpus")
 		else
 			echo "gpus could not be determined from previous run or --gpus"
 			exit 105
@@ -490,8 +588,8 @@ if [[ "$continue_previous_job" != "" ]]; then
 	fi
 
 	if [[ -z "$time" ]]; then
-		if [[ -e "$continue_previous_job/time" ]]; then
-			time=$(cat "$continue_previous_job/time")
+		if [[ -e "$continue_previous_job/state_files/time" ]]; then
+			time=$(cat "$continue_previous_job/state_files/time")
 		else
 			echo "Time could not be determined from previous run or --time"
 			exit 105
@@ -591,7 +689,7 @@ if [ -n "${SLURM_JOB_ID:-}" ] || ! command -v sbatch >/dev/null; then
 	fi
 
 	if [[ ! -z $SLURM_JOB_ID ]]; then
-		echo -e "To cancel, use '\e[31mscancel $SLURM_JOB_ID\e[0m'"
+		echo -e "To cancel, press \033[1mCTRL\e[0m \033[1mc\e[0m, then run '\e[31mscancel $SLURM_JOB_ID\e[0m'"
 	fi
 
 	IFS=$' '
@@ -603,14 +701,13 @@ if [ -n "${SLURM_JOB_ID:-}" ] || ! command -v sbatch >/dev/null; then
 	set +e
 	python3 $SCRIPT_DIR/.omniopt.py $args_string &
 	python_pid=$!
+
+	set +x
 	wait $python_pid
+
 	EXIT_CODE=$?
 
 	set -e
-
-	if [[ "$EXIT_CODE" -ne "0" ]]; then
-		echo "Exiting with exit-code $EXIT_CODE"
-	fi
 
 	tput bel
 
@@ -624,10 +721,10 @@ else
 	exit_code=""
 
 	if [[ $gpus -ne 0 ]]; then
-		sbatch_result=$(sbatch --job-name "$experiment_name" --time=$formatted_time --mem=${mem_gb}GB --gres=gpu:$gpus $SCRIPT_DIR/omniopt $args_string | tee /dev/stderr)
+		sbatch_result=$(sbatch -N 1 --job-name "$experiment_name" --time=$formatted_time --mem=${mem_gb}GB --gres=gpu:$gpus $SCRIPT_DIR/omniopt $args_string | tee /dev/stderr)
 		exit_code=$?
 	else
-		sbatch_result=$(sbatch --job-name "$experiment_name" --time=$formatted_time --mem=${mem_gb}GB $SCRIPT_DIR/omniopt $args_string | tee /dev/stderr)
+		sbatch_result=$(sbatch -N 1 --job-name "$experiment_name" --time=$formatted_time --mem=${mem_gb}GB $SCRIPT_DIR/omniopt $args_string | tee /dev/stderr)
 		exit_code=$?
 	fi
 
@@ -645,12 +742,57 @@ else
 
 				set +x
 
-				echo -n "Waiting until the path $LOG_PATH exists. CTRL-c does NOT cancel the optimization, only the tail...  "
+				last_why_pending_time=$(date +%s)
+
+				estimated_start_time=""
+				estimated_start_time_original=""
+				in_about_time=""
+				_remaining_time=""
+				last_print_line_length=0
 
 				while ! [[ -e $LOG_PATH ]]; do
+					current_time=$(date +%s)
+
+					time_diff=$(($current_time - $last_why_pending_time))
+
+					set +e
+					if command -v whypending 2>/dev/null > /dev/null && [[ $time_diff -gt 10 ]]; then
+						estimated_start_time_original=$(timeout 5 whypending $started_job_nr 2>&1 | grep "Estimated" | sed -e 's#.*time:\s*###' -e 's#^\s*##')
+
+						last_why_pending_time=$current_time
+						if [[ ! -z $estimated_start_time_original ]] && [[ "$estimated_start_time_original" != *"Unknown"* ]]; then
+							estimated_start_time=". Estimated start:$estimated_start_time_original"
+							if [[ ! -z $estimated_start_time_original ]]; then
+								_remaining_time=""
+								_remaining_time=$(remaining_time "$estimated_start_time_original" | sed -e 's#\s\s*# #g')
+
+								if [[ ! -z $_remaining_time ]]; then
+									estimated_start_time="$estimated_start_time ($_remaining_time)"
+								fi
+							fi
+						fi
+					fi
+					set -e
+
 					for i in "${spin[@]}"; do
-						echo -ne "\b$i"
+						print_line="Waiting for \e[4mtail -f $LOG_PATH\e[0m$estimated_start_time... "
+						print_line_length=$(echo "$print_line" | wc -c)
+
+						#backspaces=""
+
+						#for k in $(seq 0 $(($print_line_length + 1000))); do
+						#	backspaces="$backspaces\r"
+						#done
+
+						print_line="$print_line$i"
+						tput cr   # Move cursor to beginning of line
+						tput el   # Delete line from start to finish
+
+						#echo -ne "$backspaces"
+						echo -ne "$print_line"
 						sleep 0.1
+
+						last_print_line_length=$print_line_length
 					done
 				done
 
@@ -722,4 +864,10 @@ else
 fi
 
 echo "Runtime: $(displaytime $SECONDS)"
-exit $exit_code
+
+if [[ "$exit_code" =~ ^[0-9]+$ ]]; then
+	exit $exit_code
+else
+	echo "Invalid exit-code $exit_code detected!"
+	exit 0
+fi

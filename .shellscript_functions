@@ -1,6 +1,8 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
+FROZEN=""
+
 function displaytime {
 	local T=$1
 		local D=$((T/60/60/24))
@@ -24,7 +26,7 @@ border=white,red
 textbox=white,red
 button=black,white
 '
-    whiptail --title "Error Message" --msgbox "$MSG" $LINES $COLUMNS $(( $LINES - 8 ))
+    whiptail --title "Error Message" --scrolltext --msgbox "$MSG" $LINES $COLUMNS $(( $LINES - 8 ))
 	export NEWT_COLORS=""
 }
 
@@ -67,18 +69,62 @@ fi
 VENV_DIR_NAME=.omniax_$(uname -m)_$(python3 --version | sed -e 's# #_#g')
 VENV_DIR=$HOME/$VENV_DIR_NAME
 
+UPGRADED_PIP=0
+
 function ppip {
-	pip3 install $* || {
-		red "Failed to install $*. Deleting $VENV_DIR..."
-		rm -rf $VENV_DIR || {
-			red "Failed to delete $VENV_DIR"
-			exit 4
+	set +e
+	echo "$FROZEN" | grep -i "$1" 2>/dev/null >/dev/null
+	_exit_code=$?
+
+	if [[ "$_exit_code" != "0" ]]; then
+		if [[ "$UPGRADED_PIP" -eq "0" ]]; then
+			pip install --upgrade pip
+			UPGRADED_PIP=1
+		fi
+
+		pip3 install $1 || {
+			red "Failed to install $1. Deleting $VENV_DIR..."
+			rm -rf $VENV_DIR || {
+				red "Failed to delete $VENV_DIR"
+				exit 4
+			}
+
+			exit 3
 		}
 
-		exit 3
-	}
+		green "$1 installed successfully"
 
-	green "$* installed successfully"
+		FROZEN=$(pip3 freeze)
+	fi
+	set -e
+}
+
+function install_required_modules {
+	ppip Rich
+	ppip scikit-learn
+	ppip submitit
+	ppip ax
+	ppip ax-platform
+	ppip matplotlib
+	ppip Pyarrow
+	ppip textual
+	ppip tqdm
+	ppip plotext
+	ppip plotille
+	ppip watchdog
+	ppip seaborn
+	ppip art
+	ppip pyvista
+	ppip catsay
+	ppip sixel
+	ppip pytz
+	ppip tzlocal
+
+	#if ! declare -f ml 2>/dev/null >/dev/null; then
+	#	ppip tkinter
+	#else
+	#	echo "Not installing tkinter, because it (hopefully) has already been loaded with ml"
+	#fi
 }
 
 if [[ "$SCRIPT_DIR" != *"$VENV_DIR"* ]]; then
@@ -89,7 +135,7 @@ if [[ "$SCRIPT_DIR" != *"$VENV_DIR"* ]]; then
 		fi
 
 		if ! command -v resize >/dev/null 2>/dev/null; then
-			red "resize not found. Try installing with, for example, with 'sudo apt-get install xterm' (depending on your distro)"
+			red "resize not found. Try installing xterm with, for example, with 'sudo apt-get install xterm' (depending on your distro)"
 			exit 4
 		fi
 
@@ -113,23 +159,13 @@ if [[ "$SCRIPT_DIR" != *"$VENV_DIR"* ]]; then
 
 		green "Virtual Environment activated. Now installing software. This may take some time."
 
-		pip install --upgrade pip
-
-		ppip Rich
-		ppip scikit-learn
-		ppip submitit
-		ppip ax
-		ppip ax-platform
-		ppip matplotlib
-		ppip Pyarrow
-		ppip textual
-		ppip tqdm
-		ppip plotext
-		ppip plotille
-		ppip watchdog
-		ppip seaborn
-		ppip tkinter
 	fi
-
-	source $VENV_DIR/bin/activate
 fi
+
+source $VENV_DIR/bin/activate || {
+	red "Failed to activate $VENV_DIR"
+	exit 2
+}
+
+FROZEN=$(pip3 freeze)
+install_required_modules

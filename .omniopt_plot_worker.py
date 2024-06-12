@@ -1,12 +1,25 @@
 # DESCRIPTION: Plot number of workers over time
 # EXPECTED FILES: worker_usage.csv
+# TEST_OUTPUT_MUST_CONTAIN: Requested Number of Workers
+# TEST_OUTPUT_MUST_CONTAIN: Number of Current Workers
+# TEST_OUTPUT_MUST_CONTAIN: Worker Usage Plot
+
+import os
+script_dir = os.path.dirname(os.path.realpath(__file__))
+helpers_file = f"{script_dir}/.helpers.py"
+import importlib.util
+spec = importlib.util.spec_from_file_location(
+    name="helpers",
+    location=helpers_file,
+)
+my_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(my_module)
 
 import re
 import traceback
 import sys
 from datetime import datetime
 import argparse
-import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -42,7 +55,7 @@ def looks_like_int(x):
 
 def plot_worker_usage(args, pd_csv):
     try:
-        data = pd.read_csv(pd_csv)
+        data = pd.read_csv(pd_csv, names=['time', 'num_parallel_jobs', 'nr_current_workers', 'percentage'])
 
         assert_condition(len(data.columns) > 0, "CSV file has no columns.")
         assert_condition("time" in data.columns, "The 'time' column is missing.")
@@ -78,9 +91,14 @@ def plot_worker_usage(args, pd_csv):
 
         plt.tight_layout()
         if args.save_to_file:
+            _path = os.path.dirname(args.save_to_file)
+            if _path:
+                os.makedirs(_path, exist_ok=True)
+
             plt.savefig(args.save_to_file)
         else:
-            plt.show()
+            if not args.no_plt_show:
+                plt.show()
     except FileNotFoundError:
         log_error(f"File '{pd_csv}' not found.")
     except AssertionError as e:
@@ -107,10 +125,9 @@ def main():
     parser.add_argument('--bubblesize', type=int, help='Size of the bubbles (useless here)', default=7)
     parser.add_argument('--delete_temp', help='Delete temp files (useless here)', action='store_true', default=False)
     parser.add_argument('--merge_with_previous_runs', action='append', nargs='+', help="Run-Dirs to be merged with (useless here)", default=[])
-    parser.add_argument('--result_column', type=str, help='Name of the result column (useless here)', default="result")
-    parser.add_argument('--print_to_command_line', help='Print plot to command line (useless here)', action='store_true', default=False)
     parser.add_argument('--exclude_params', action='append', nargs='+', help="Params to be ignored (useless here)", default=[])
     parser.add_argument('--single', help='Print plot to command line (useless here)', action='store_true', default=False)
+    parser.add_argument('--no_plt_show', help='Disable showing the plot', action='store_true', default=False)
     args = parser.parse_args()
 
     if args.debug:
@@ -126,7 +143,7 @@ def main():
                 sys.exit(3)
         else:
             log_error(f"File '{worker_usage_csv}' does not exist.")
+            sys.exit(19)
 
 if __name__ == "__main__":
     main()
-

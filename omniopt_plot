@@ -1,5 +1,11 @@
 #!/bin/bash
 
+if [[ ! -z $PRINT_SEPERATOR ]]; then # for tests, so that things are properly visually seperated
+	echo ""
+	echo "========================================================================"
+	echo ""
+fi
+
 _save_to_file=0
 
 function inputbox {
@@ -70,10 +76,10 @@ function displaytime {
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 export ORIGINAL_PWD=$(pwd)
 
-expected_plot_types=("default")
+expected_plot_types=("menu")
 whiptail_args=()
 
-for possible_plot_type in $(ls $SCRIPT_DIR/.omniopt_plot_*.py | sed -e 's#\.py##' -e 's#.*_plot_##'); do
+for possible_plot_type in $(ls $SCRIPT_DIR/.omniopt_plot_*.py | sed -e 's#\.py##' -e 's#.*_plot_##' | tac); do
 	expected_plot_types+=("$possible_plot_type")
 done
 
@@ -89,106 +95,137 @@ set -e
 set -o pipefail
 
 function calltracer () {
-        echo 'Last file/last line:'
-        caller
+	if [[ -z $NO_RUNTIME ]]; then
+		echo 'Last file/last line:'
+		caller
 
-	echo "Runtime: $(displaytime $SECONDS)"
+		echo "Runtime: $(displaytime $SECONDS)"
+	fi
 }
+
 trap 'calltracer' ERR
 
-plot_type="default"
+plot_type="menu"
 min=
 max=
 run_dir=""
 help=0
 
-args=($*)
+args=("$@")
 k=0
+
 while [ $k -lt ${#args[@]} ]; do
-	arg="${args[k]}"
+    arg="${args[k]}"
 
-        case $arg in
-		--run_dir=*)
-			run_dir="${arg#*=}"
-			shift
-			;;
+    case $arg in
+        --run_dir=*)
+            run_dir="${arg#*=}"
+            shift
+            ;;
 
-		--run_dir)
-			k=$((k+1))
+        --run_dir)
+            k=$((k+1))
+            if [ $k -ge ${#args[@]} ] || [[ "${args[k]}" == --* ]]; then
+                echo "Error: --run_dir requires a value"
+                exit 1
+            fi
+            run_dir="${args[k]}"
+            shift
+            shift
+            ;;
 
-			run_dir="${args[k]}"
+        --save_to_file=*)
+            _save_to_file="${arg#*=}"
+            shift
+            ;;
 
-			shift
-			shift
-			;;
+        --save_to_file)
+            k=$((k+1))
+            if [ $k -ge ${#args[@]} ] || [[ "${args[k]}" == --* ]]; then
+                echo "Error: --save_to_file requires a value"
+                exit 1
+            fi
+            _save_to_file="${args[k]}"
+            shift
+            shift
+            ;;
 
+        --min=*)
+            min="${arg#*=}"
+            shift
+            ;;
 
+        --min)
+            k=$((k+1))
+            if [ $k -ge ${#args[@]} ] || [[ "${args[k]}" == --* ]]; then
+                echo "Error: --min requires a value"
+                exit 1
+            fi
+            min="${args[k]}"
+            shift
+            shift
+            ;;
 
-		--min=*)
-			min="${arg#*=}"
-			shift
-			;;
-		--min)
-			k=$((k+1))
+        --max=*)
+            max="${arg#*=}"
+            shift
+            ;;
 
-			min="${args[k]}"
-			shift
-			;;
-		--max=*)
-			max="${arg#*=}"
-			shift
-			;;
-		--max)
-			k=$((k+1))
+        --max)
+            k=$((k+1))
+            if [ $k -ge ${#args[@]} ] || [[ "${args[k]}" == --* ]]; then
+                echo "Error: --max requires a value"
+                exit 1
+            fi
+            max="${args[k]}"
+            shift
+            shift
+            ;;
 
-			max="${args[k]}"
-			shift
-			;;
-		--plot_type=*)
-			plot_type="${arg#*=}"
-			shift
-			;;
-		--plot_type)
-			k=$((k+1))
+        --plot_type=*)
+            plot_type="${arg#*=}"
+            shift
+            ;;
 
-			plot_type="${args[k]}"
-			shift
-			;;
-                --help|-h)
-			help=1
-			shift
-                        ;;
-                --debug)
-                        set -x
-                        ;;
-        esac
-	k=$((k+1))
+        --plot_type)
+            k=$((k+1))
+            if [ $k -ge ${#args[@]} ] || [[ "${args[k]}" == --* ]]; then
+                echo "Error: --plot_type requires a value"
+                exit 1
+            fi
+            plot_type="${args[k]}"
+            shift
+            shift
+            ;;
+
+        --help|-h)
+            help=1
+            shift
+            ;;
+
+        --debug)
+            set -x
+            shift
+            ;;
+    esac
+    k=$((k+1))
 done
 
 if [[ ! " ${expected_plot_types[@]} " =~ " $plot_type " ]]; then
-    echo "Wrong plot type: $plot_type, but got $plot_type"
+	# Verbinden Sie die Elemente des Arrays zu einem mit "," getrennten String
+	joined_plot_types=$(printf "%s, " "${expected_plot_types[@]}")
+
+	# Entfernen Sie das letzte "," vom gejointen String
+	joined_plot_types=${joined_plot_types%, }
+
+	echo "Invalid plot type $plot_type, valid plot types: $joined_plot_types"
+	exit 99
 fi
 
-if [[ "$plot_type" == "default" ]]; then
-	if [[ "$run_dir" == "" ]]; then
-		echo "--run_dir is missing"
-		exit 1
-	fi
-
-	if [[ -f "$run_dir" ]]; then
-		echo "--run_dir is a file"
-		exit 1
-	fi
-
-	if [[ ! -d "$run_dir" ]]; then
-		echo "--run_dir is not a directory"
-		exit 1
-	fi
-
-	eval `resize`
-
+function menu {
+	whiptail_args=()
 	for possible_plot_type in "${expected_plot_types[@]}"; do
-		if [[ "$possible_plot_type" == "default" ]]; then
+		if [[ "$possible_plot_type" == "menu" ]]; then
 			continue
 		fi
 
@@ -226,7 +263,7 @@ if [[ "$plot_type" == "default" ]]; then
 	done
 
 	if [ ${#whiptail_args[@]} -eq 0 ]; then
-		echo "It seems like the run folder does not have any plottable data."
+		echo "It seems like the run folder $run_dir does not have any plottable data."
 		exit 3
 	fi
 
@@ -253,13 +290,14 @@ if [[ "$plot_type" == "default" ]]; then
 		minmaxstring=" (min: $min, max: $max)"
 	fi
 
+	eval `resize`
 	WHATTODO=$(whiptail \
 		--title "Available options for $run_dir" \
 		--menu \
 		"Chose what plot to open:" \
 		$LINES $COLUMNS $(( $LINES - 8 )) \
-		"minmax)" "set min/max values$minmaxstring" \
 		"${whiptail_args[@]}" \
+		"minmax)" "set min/max values$minmaxstring" \
 		"q)" "quit" 3>&1 1>&2 2>&3
 	)
 
@@ -294,10 +332,12 @@ if [[ "$plot_type" == "default" ]]; then
 	plot_type=$WHATTODO
 	if [[ "$plot_type" == *"save_to_file"* ]]; then
 		plot_type=$(echo "$plot_type" | sed -e 's# .*##')
-		_save_to_file=1
+		if [[ "$_save_to_file" -eq "0" ]]; then
+			_save_to_file=1
+		fi
 	fi
 
-	if [[ "$_save_to_file" == "1" ]]; then
+	if [[ "$_save_to_file" != "0" ]]; then
 		_path=$(whiptail --inputbox "Path of the plot?" 8 39 "$run_dir/$plot_type.svg" --title "Choose path" 3>&1 1>&2 2>&3)
 
 		exitstatus=$?
@@ -307,6 +347,25 @@ if [[ "$plot_type" == "default" ]]; then
 			exit 0
 		fi
 	fi
+}
+
+if [[ "$plot_type" == "menu" ]]; then
+	if [[ "$run_dir" == "" ]]; then
+		echo "--run_dir is missing"
+		exit 1
+	fi
+
+	if [[ -f "$run_dir" ]]; then
+		echo "--run_dir is a file"
+		exit 1
+	fi
+
+	if [[ ! -d "$run_dir" ]]; then
+		echo "--run_dir is not a directory"
+		exit 1
+	fi
+
+	menu
 fi
 
 cd $ORIGINAL_PWD
@@ -314,7 +373,7 @@ cd $ORIGINAL_PWD
 source $SCRIPT_DIR/.shellscript_functions
 source $SCRIPT_DIR/.general.sh
 
-if [[ "$plot_type" != "default" ]]; then
+if [[ "$plot_type" != "menu" ]]; then
 	if ! [[ -e "$SCRIPT_DIR/.omniopt_plot_$plot_type.py" ]]; then
 		# Verbinden Sie die Elemente des Arrays zu einem mit "," getrennten String
 		joined_plot_types=$(printf "%s, " "${expected_plot_types[@]}")
@@ -327,29 +386,36 @@ if [[ "$plot_type" != "default" ]]; then
 	fi
 fi
 
-set +ex
+set +e
 if [[ "$_save_to_file" == "0" ]]; then
 	OUTPUT=$(python3 $SCRIPT_DIR/.omniopt_plot_$plot_type.py --run_dir $run_dir $* 2>&1)
 	exit_code=$?
 else
-	OUTPUT=$(python3 $SCRIPT_DIR/.omniopt_plot_$plot_type.py --run_dir $run_dir --save_to_file $_save_to_file $* 2>&1)
+	OUTPUT=$(python3 $SCRIPT_DIR/.omniopt_plot_$plot_type.py --run_dir $run_dir --save_to_file=$_save_to_file $* 2>&1)
 	exit_code=$?
 fi
-set -ex
+set -e
 
 if [[ "$exit_code" -ne "0" ]]; then
 	if command -v whiptail 2>/dev/null >/dev/null; then
 		if [[ -z $NO_WHIPTAIL ]]; then
 			error_message "$OUTPUT"
 		else
-			echo $OUTPUT
+			if [[ ! -z "$OUTPUT" ]]; then
+				echo_red "$OUTPUT"
+			fi
 		fi
 	else
-		echo -- "$OUTPUT"
+		echo_red "$OUTPUT"
 	fi
 else
-	echo "$OUTPUT"
+	if [[ ! -z  "$OUTPUT" ]]; then
+		echo "$OUTPUT"
+	fi
 fi
 
-echo "Runtime: $(displaytime $SECONDS)"
+if [[ -z $NO_RUNTIME ]]; then
+	echo "Runtime: $(displaytime $SECONDS), plot_type: $plot_type, exit-code: $exit_code"
+fi
+
 exit $exit_code
