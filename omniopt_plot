@@ -1,5 +1,9 @@
 #!/bin/bash
 
+export ORIGINAL_PWD=$(pwd)
+export MPLCONFIGDIR="/tmp/oo_matplotlib_cache_$USER"
+export XDG_CACHE_HOME="/tmp/XDG_CACHE_HOME_$USER"
+
 if [[ ! -z $PRINT_SEPERATOR ]]; then # for tests, so that things are properly visually seperated
 	echo ""
 	echo "========================================================================"
@@ -74,7 +78,6 @@ function displaytime {
 }
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-export ORIGINAL_PWD=$(pwd)
 
 expected_plot_types=("menu")
 whiptail_args=()
@@ -220,6 +223,10 @@ if [[ ! " ${expected_plot_types[@]} " =~ " $plot_type " ]]; then
 
 	echo "Invalid plot type $plot_type, valid plot types: $joined_plot_types"
 	exit 99
+fi
+
+if ! echo "$run_dir" | grep "^/" 2>/dev/null >/dev/null; then
+	run_dir="$ORIGINAL_PWD/$run_dir"
 fi
 
 function menu {
@@ -391,7 +398,11 @@ if [[ "$_save_to_file" == "0" ]]; then
 	OUTPUT=$(python3 $SCRIPT_DIR/.omniopt_plot_$plot_type.py --run_dir $run_dir $* 2>&1)
 	exit_code=$?
 else
-	OUTPUT=$(python3 $SCRIPT_DIR/.omniopt_plot_$plot_type.py --run_dir $run_dir --save_to_file=$_save_to_file $* 2>&1)
+	if [[ -d docker_user_dir ]]; then
+		OUTPUT=$(python3 $SCRIPT_DIR/.omniopt_plot_$plot_type.py --run_dir $run_dir --save_to_file=docker_user_dir/$_save_to_file $* 2>&1)
+	else
+		OUTPUT=$(python3 $SCRIPT_DIR/.omniopt_plot_$plot_type.py --run_dir $run_dir --save_to_file=$_save_to_file $* 2>&1)
+	fi
 	exit_code=$?
 fi
 set -e

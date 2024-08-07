@@ -13,7 +13,7 @@ function ppip {
 			UPGRADED_PIP=1
 		fi
 
-		pip3 install $1 || {
+		pip3 install -q $1 || {
 			red_text "Failed to install $1. Deleting $VENV_DIR..."
 			rm -rf $VENV_DIR || {
 				red_text "Failed to delete $VENV_DIR"
@@ -53,7 +53,7 @@ if [[ -d $LMOD_DIR ]]; then
 		eval "$($LMOD_DIR/ml_cmd "$@")"
 	}
 
-	ml release/23.10 GCC/11.3.0 OpenMPI/4.1.4 TensorFlow/2.11.0-CUDA-11.7.0
+	ml release/24.04 GCC/11.3.0 OpenMPI/4.1.4 TensorFlow/2.9.1
 fi
 
 VENV_DIR=$HOME/.omniopt_test_install_$(uname -m)_$(python3 --version | sed -e 's# #_#g')
@@ -65,13 +65,23 @@ else
 fi
 
 source $VENV_DIR/bin/activate || {
-	red_text "Failed to activate $VENV_DIR"
-	exit 2
+	red_text "Failed to activate $VENV_DIR. Trying to delete it and try again..."
+	rm -rf $VENV_DIR
+        python3 -m venv $VENV_DIR
+
+	source $VENV_DIR/bin/activate || {
+		red_text "Failed to activate $VENV_DIR"
+		exit 2
+	}
 }
 
 FROZEN=$(pip3 freeze)
 
-ppip tensorflow
+ppip decorator
+ppip six
+if [[ ! -d $LMOD_DIR ]]; then
+	ppip tensorflow
+fi
 ppip tensorflowjs
 ppip protobuf
 ppip scikit-image
@@ -80,3 +90,4 @@ ppip keras
 ppip termcolor
 ppip pyyaml
 ppip h5py
+ppip tf_keras

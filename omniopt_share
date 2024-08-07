@@ -1,0 +1,93 @@
+#!/bin/bash
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source $SCRIPT_DIR/.shellscript_functions
+
+function join_by {
+	local d=${1-} f=${2-}
+	if shift 2; then
+		printf %s "$f" "${@/#/$d}"
+	fi
+}
+
+RUN_DIR=$1
+
+function echoerr {
+        echo "$@" 1>&2
+}
+
+function yellow_text {
+	echoerr -e "\e\033[0;33m$1\e[0m"
+}
+
+function green_text {
+	echoerr -e "\033[0;32m$1\e[0m"
+}
+
+function red_text {
+	echoerr -e "\e[31m$1\e[0m"
+}
+
+if [[ -z $RUN_DIR ]]; then
+	red_text "Parameter for RUN_DIR is not set"
+	exit 1
+fi
+
+if [[ ! -d "$RUN_DIR" ]]; then
+	red_text "$RUN_DIR does not exist"
+	exit 1
+fi
+
+run_nr=$(echo "$RUN_DIR" | sed -e 's#.*/##')
+experiment_name=$(echo "$RUN_DIR" | sed -e 's#/[0-9]*$##g' -e 's#.*/##')
+
+curl_options=()
+
+for available_file in $(ls $RUN_DIR); do 
+	available_file_param_name=$(echo "$available_file" | sed -e 's#\..*##')
+	if echo "$available_file" | egrep -i "\.(csv|txt)" 2>/dev/null > /dev/null; then
+		curl_options+=("-F" "$available_file_param_name=@$RUN_DIR/$available_file")
+	fi
+done
+
+for available_file in $(ls $RUN_DIR/state_files); do 
+	available_file_param_name=$(echo "$available_file" | sed -e 's#\..*##')
+	if echo "$available_file" | egrep -i "\.(csv|txt)" 2>/dev/null > /dev/null; then
+		curl_options+=("-F" "$available_file_param_name=@$RUN_DIR/$available_file")
+	fi
+done
+
+eval `resize`
+user_id=$(whiptail --inputbox "By entering your name here you agree to make it public with this data? If you don't agree, cancel." 12 40  "$USER" --title "What should be your user name?" 3>&1 1>&2 2>&3)
+
+exitstatus=$?
+if [ $exitstatus = 0 ]; then
+	true
+else
+    yellow_text "You cancelled sharing."
+    exit 0
+fi
+
+BASEURL="https://imageseg.scads.de/omniax"
+
+if [[ -e "$HOME/.oo_base_url" ]]; then
+	BASEURL=$(cat $HOME/.oo_base_url)
+	yellow_text "$HOME/.oo_base_url exists. Using base-url $BASEURL"
+fi
+
+
+
+set -e
+url="$BASEURL/share.php?user_id=$user_id&experiment_name=$experiment_name"
+CURL_OUTPUT=$(curl -s "${curl_options[@]}" $url)
+exit_code=$?
+
+if [[ $exit_code -ne 0 ]] || echo "$CURL_OUTPUT" | grep "Error sharing the job." 2>&1 > /dev/null; then
+	red_text "$CURL_OUTPUT"
+	if [[ $exit_code -ne 0 ]]; then
+		echo "Curling $url failed"
+		exit $exit_code
+	fi
+else
+	green_text "$CURL_OUTPUT"
+fi
